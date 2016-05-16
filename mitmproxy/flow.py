@@ -1016,6 +1016,7 @@ class FlowMaster(controller.ServerMaster):
             self.state.add_flow(f)
         self.replacehooks.run(f)
         self.setheaders.run(f)
+        self.run_script_hook("pre_request", f);
         self.process_new_request(f)
         self.run_script_hook("request", f)
         return f
