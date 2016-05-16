@@ -162,7 +162,7 @@ class Request(Message):
     def path(self):
         """
         HTTP request path, e.g. "/index.html".
-        Guaranteed to start with a slash.
+        Guaranteed to start with a slash, except for OPTIONS requests, which may just be "*".
         """
         if self.data.path is None:
             return None
@@ -342,14 +342,6 @@ class Request(Message):
         raise NotImplementedError()
 
     # Legacy
-
-    def get_cookies(self):  # pragma: no cover
-        warnings.warn(".get_cookies is deprecated, use .cookies instead.", DeprecationWarning)
-        return self.cookies
-
-    def set_cookies(self, odict):  # pragma: no cover
-        warnings.warn(".set_cookies is deprecated, use .cookies instead.", DeprecationWarning)
-        self.cookies = odict
 
     def get_query(self):  # pragma: no cover
         warnings.warn(".get_query is deprecated, use .query instead.", DeprecationWarning)

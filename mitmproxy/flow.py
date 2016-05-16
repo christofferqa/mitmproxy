@@ -13,9 +13,9 @@ from six.moves import http_cookies, http_cookiejar, urllib
 import os
 import re
 
-from netlib import wsgi
+from netlib import wsgi, odict
 from netlib.exceptions import HttpException
-from netlib.http import Headers, http1
+from netlib.http import Headers, http1, cookies
 from . import controller, tnetstring, filt, script, version, flow_format_compat
 from .onboarding import app
 from .proxy.config import HostMatcher
@@ -171,7 +171,7 @@ class StreamLargeBodies(object):
         expected_size = http1.expected_http_body_size(
             flow.request, flow.response if not is_request else None
         )
-        if not (0 <= expected_size <= self.max_size):
+        if not r.content and not (0 <= expected_size <= self.max_size):
             # r.stream may already be a callable, which we want to preserve.
             r.stream = r.stream or True
 
@@ -313,15 +313,17 @@ class StickyCookieState:
         self.jar = defaultdict(dict)
         self.flt = flt
 
-    def ckey(self, m, f):
+    def ckey(self, attrs, f):
         """
             Returns a (domain, port, path) tuple.
         """
-        return (
-            m["domain"] or f.request.host,
-            f.request.port,
-            m["path"] or "/"
-        )
+        domain = f.request.host
+        path = "/"
+        if attrs["domain"]:
+            domain = attrs["domain"][-1]
+        if attrs["path"]:
+            path = attrs["path"][-1]
+        return (domain, f.request.port, path)
 
     def domain_match(self, a, b):
         if http_cookiejar.domain_match(a, b):
@@ -334,11 +336,12 @@ class StickyCookieState:
         for i in f.response.headers.get_all("set-cookie"):
             # FIXME: We now know that Cookie.py screws up some cookies with
             # valid RFC 822/1123 datetime specifications for expiry. Sigh.
-            c = http_cookies.SimpleCookie(str(i))
-            for m in c.values():
-                k = self.ckey(m, f)
-                if self.domain_match(f.request.host, k[0]):
-                    self.jar[k][m.key] = m
+            name, value, attrs = cookies.parse_set_cookie_header(str(i))
+            a = self.ckey(attrs, f)
+            if self.domain_match(f.request.host, a[0]):
+                b = attrs.lst
+                b.insert(0, [name, value])
+                self.jar[a][name] = odict.ODictCaseless(b)
 
     def handle_request(self, f):
         l = []
@@ -350,7 +353,8 @@ class StickyCookieState:
                     f.request.path.startswith(i[2])
                 ]
                 if all(match):
-                    l.extend([m.output(header="").strip() for m in self.jar[i].values()])
+                    c = self.jar[i]
+                    l.extend([cookies.format_cookie_header(c[name]) for name in c.keys()])
         if l:
             f.request.stickycookie = True
             f.request.headers["cookie"] = "; ".join(l)
@@ -695,14 +699,13 @@ class FlowMaster(controller.ServerMaster):
 
     def load_script(self, command, use_reloader=False):
         """
-            Loads a script. Returns an error description if something went
-            wrong.
+            Loads a script.
+
+            Raises:
+                ScriptException
         """
-        try:
-            s = script.Script(command, script.ScriptContext(self))
-            s.load()
-        except script.ScriptException as e:
-            return traceback.format_exc(e)
+        s = script.Script(command, script.ScriptContext(self))
+        s.load()
         if use_reloader:
             script.reloader.watch(s, lambda: self.event_queue.put(("script_change", s)))
         self.scripts.append(s)
@@ -712,7 +715,7 @@ class FlowMaster(controller.ServerMaster):
             try:
                 script_obj.run(name, *args, **kwargs)
             except script.ScriptException as e:
-                self.add_event("Script error:\n" + str(e), "error")
+                self.add_event("Script error:\n{}".format(e), "error")
 
     def run_script_hook(self, name, *args, **kwargs):
         for script_obj in self.scripts:
@@ -1022,14 +1025,14 @@ class FlowMaster(controller.ServerMaster):
         return f
 
     def handle_responseheaders(self, f):
-        self.run_script_hook("responseheaders", f)
-
         try:
             if self.stream_large_bodies:
                 self.stream_large_bodies.run(f, False)
         except HttpException:
             f.reply(Kill)
             return
+
+        self.run_script_hook("responseheaders", f)
 
         f.reply()
         return f
@@ -1070,12 +1073,12 @@ class FlowMaster(controller.ServerMaster):
             s.unload()
         except script.ScriptException as e:
             ok = False
-            self.add_event('Error reloading "{}": {}'.format(s.filename, str(e)), 'error')
+            self.add_event('Error reloading "{}":\n{}'.format(s.filename, e), 'error')
         try:
             s.load()
         except script.ScriptException as e:
             ok = False
-            self.add_event('Error reloading "{}": {}'.format(s.filename, str(e)), 'error')
+            self.add_event('Error reloading "{}":\n{}'.format(s.filename, e), 'error')
         else:
             self.add_event('"{}" reloaded.'.format(s.filename), 'info')
         return ok
