@@ -12,26 +12,30 @@ use. For HTTP, the message headers are passed as the ``headers`` keyword argumen
 requests, the query parameters are passed as the ``query`` keyword argument.
 
 """
-from __future__ import (absolute_import, print_function, division)
-from six.moves import cStringIO as StringIO
+from __future__ import absolute_import, print_function, division
+
+import datetime
 import json
 import logging
 import subprocess
 import sys
-import lxml.html
-import lxml.etree
-import datetime
-from PIL import Image
-from PIL.ExifTags import TAGS
+
 import html2text
+import lxml.etree
+import lxml.html
 import six
-from netlib.odict import ODict
+from PIL import ExifTags
+from PIL import Image
+from six import BytesIO
+
+from mitmproxy import exceptions
+from mitmproxy.contrib import jsbeautifier
+from mitmproxy.contrib.wbxml import ASCommandResponse
 from netlib import encoding
-from netlib.utils import clean_bin, hexdump, urldecode, multipartdecode, parse_content_type
-from . import utils
-from .exceptions import ContentViewException
-from .contrib import jsbeautifier
-from .contrib.wbxml.ASCommandResponse import ASCommandResponse
+from netlib import http
+from netlib import multidict
+from netlib.http import url
+from netlib import strutils
 
 try:
     import pyamf
@@ -55,6 +59,21 @@ else:
 VIEW_CUTOFF = 512
 
 KEY_MAX = 30
+
+
+def pretty_json(s):
+    # type: (bytes) -> bytes
+    try:
+        p = json.loads(s.decode('utf-8'))
+    except ValueError:
+        return None
+    pretty = json.dumps(p, sort_keys=True, indent=4, ensure_ascii=False)
+    if isinstance(pretty, six.text_type):
+        # json.dumps _may_ decide to return unicode, if the JSON object is not ascii.
+        # From limited testing this is always valid utf8 (otherwise json.loads will fail earlier),
+        # so we can just re-encode it here.
+        return pretty.encode("utf8", "strict")
+    return pretty
 
 
 def format_dict(d):
@@ -120,15 +139,15 @@ class ViewAuto(View):
         headers = metadata.get("headers", {})
         ctype = headers.get("content-type")
         if data and ctype:
-            ct = parse_content_type(ctype) if ctype else None
+            ct = http.parse_content_type(ctype) if ctype else None
             ct = "%s/%s" % (ct[0], ct[1])
             if ct in content_types_map:
                 return content_types_map[ct][0](data, **metadata)
-            elif utils.isXML(data):
+            elif strutils.isXML(data.decode()):
                 return get("XML")(data, **metadata)
         if metadata.get("query"):
             return get("Query")(data, **metadata)
-        if data and utils.isMostlyBin(data):
+        if data and strutils.isMostlyBin(data.decode()):
             return get("Hex")(data)
         if not data:
             return "No content", []
@@ -141,7 +160,7 @@ class ViewRaw(View):
     content_types = []
 
     def __call__(self, data, **metadata):
-        return "Raw", format_text(data)
+        return "Raw", format_text(strutils.bytes_to_escaped_str(data))
 
 
 class ViewHex(View):
@@ -151,7 +170,7 @@ class ViewHex(View):
 
     @staticmethod
     def _format(data):
-        for offset, hexa, s in hexdump(data):
+        for offset, hexa, s in strutils.hexdump(data):
             yield [
                 ("offset", offset + " "),
                 ("text", hexa + "   "),
@@ -190,7 +209,7 @@ class ViewXML(View):
             p = p.getprevious()
         doctype = docinfo.doctype
         if prev:
-            doctype += "\n".join(prev).strip()
+            doctype += "\n".join(p.decode() for p in prev).strip()
         doctype = doctype.strip()
 
         s = lxml.etree.tostring(
@@ -210,9 +229,9 @@ class ViewJSON(View):
     content_types = ["application/json"]
 
     def __call__(self, data, **metadata):
-        pretty_json = utils.pretty_json(data)
-        if pretty_json:
-            return "JSON", format_text(pretty_json)
+        pj = pretty_json(data)
+        if pj:
+            return "JSON", format_text(pj)
 
 
 class ViewHTML(View):
@@ -221,7 +240,7 @@ class ViewHTML(View):
     content_types = ["text/html"]
 
     def __call__(self, data, **metadata):
-        if utils.isXML(data):
+        if strutils.isXML(data.decode()):
             parser = lxml.etree.HTMLParser(
                 strip_cdata=True,
                 remove_blank_text=True
@@ -257,8 +276,8 @@ class ViewURLEncoded(View):
     content_types = ["application/x-www-form-urlencoded"]
 
     def __call__(self, data, **metadata):
-        d = urldecode(data)
-        return "URLEncoded form", format_dict(ODict(d))
+        d = url.decode(data)
+        return "URLEncoded form", format_dict(multidict.MultiDict(d))
 
 
 class ViewMultipart(View):
@@ -269,12 +288,12 @@ class ViewMultipart(View):
     @staticmethod
     def _format(v):
         yield [("highlight", "Form data:\n")]
-        for message in format_dict(ODict(v)):
+        for message in format_dict(multidict.MultiDict(v)):
             yield message
 
     def __call__(self, data, **metadata):
         headers = metadata.get("headers", {})
-        v = multipartdecode(headers, data)
+        v = http.multipart.decode(headers, data)
         if v:
             return "Multipart form", self._format(v)
 
@@ -304,7 +323,10 @@ if pyamf:
         prompt = ("amf", "f")
         content_types = ["application/x-amf"]
 
-        def unpack(self, b, seen=set([])):
+        def unpack(self, b, seen=None):
+            if seen is None:
+                seen = set([])
+
             if hasattr(b, "body"):
                 return self.unpack(b.body, seen)
             if isinstance(b, DummyObject):
@@ -397,7 +419,7 @@ class ViewImage(View):
 
     def __call__(self, data, **metadata):
         try:
-            img = Image.open(StringIO(data))
+            img = Image.open(BytesIO(data))
         except IOError:
             return None
         parts = [
@@ -414,11 +436,11 @@ class ViewImage(View):
             ex = img._getexif()
             if ex:
                 for i in sorted(ex.keys()):
-                    tag = TAGS.get(i, i)
+                    tag = ExifTags.TAGS.get(i, i)
                     parts.append(
                         (str(tag), str(ex[i]))
                     )
-        fmt = format_dict(ODict(parts))
+        fmt = format_dict(multidict.MultiDict(parts))
         return "%s image" % img.format, fmt
 
 
@@ -489,7 +511,7 @@ class ViewWBXML(View):
     def __call__(self, data, **metadata):
 
         try:
-            parser = ASCommandResponse(data)
+            parser = ASCommandResponse.ASCommandResponse(data)
             parsedContent = parser.xmlString
             if parsedContent:
                 return "WBXML", format_text(parsedContent)
@@ -518,12 +540,12 @@ def add(view):
     # TODO: auto-select a different name (append an integer?)
     for i in views:
         if i.name == view.name:
-            raise ContentViewException("Duplicate view: " + view.name)
+            raise exceptions.ContentViewException("Duplicate view: " + view.name)
 
     # TODO: the UI should auto-prompt for a replacement shortcut
     for prompt in view_prompts:
         if prompt[1] == view.prompt[1]:
-            raise ContentViewException("Duplicate view shortcut: " + view.prompt[1])
+            raise exceptions.ContentViewException("Duplicate view shortcut: " + view.prompt[1])
 
     views.append(view)
 
@@ -576,9 +598,9 @@ def safe_to_print(lines, encoding="utf8"):
         clean_line = []
         for (style, text) in line:
             try:
-                text = clean_bin(text.decode(encoding, "strict"))
+                text = strutils.clean_bin(text.decode(encoding, "strict"))
             except UnicodeDecodeError:
-                text = clean_bin(text).decode(encoding, "strict")
+                text = strutils.clean_bin(text).decode(encoding, "strict")
             clean_line.append((style, text))
         yield clean_line
 
@@ -610,8 +632,8 @@ def get_content_view(viewmode, data, **metadata):
     # Third-party viewers can fail in unexpected ways...
     except Exception as e:
         six.reraise(
-            ContentViewException,
-            ContentViewException(str(e)),
+            exceptions.ContentViewException,
+            exceptions.ContentViewException(str(e)),
             sys.exc_info()[2]
         )
     if not ret:

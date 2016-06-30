@@ -1,12 +1,14 @@
 import abc
 import copy
 import random
+from functools import total_ordering
 
 import pyparsing as pp
 
 from . import base
 
 
+@total_ordering
 class _Action(base.Token):
 
     """
@@ -31,8 +33,11 @@ class _Action(base.Token):
             c.offset = l + 1
         return c
 
-    def __cmp__(self, other):
-        return cmp(self.offset, other.offset)
+    def __lt__(self, other):
+        return self.offset < other.offset
+
+    def __eq__(self, other):
+        return self.offset == other.offset
 
     def __repr__(self):
         return self.spec()

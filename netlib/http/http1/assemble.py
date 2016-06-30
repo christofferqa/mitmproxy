@@ -1,12 +1,12 @@
 from __future__ import absolute_import, print_function, division
 
-from ... import utils
-import itertools
-from ...exceptions import HttpException
+import netlib.http.url
+from netlib import exceptions
+
 
 def assemble_request(request):
     if request.content is None:
-        raise HttpException("Cannot assemble flow with missing content")
+        raise exceptions.HttpException("Cannot assemble flow with missing content")
     head = assemble_request_head(request)
     body = b"".join(assemble_body(request.data.headers, [request.data.content]))
     return head + body
@@ -20,7 +20,7 @@ def assemble_request_head(request):
 
 def assemble_response(response):
     if response.content is None:
-        raise HttpException("Cannot assemble flow with missing content")
+        raise exceptions.HttpException("Cannot assemble flow with missing content")
     head = assemble_response_head(response)
     body = b"".join(assemble_body(response.data.headers, [response.data.content]))
     return head + body
@@ -82,7 +82,7 @@ def _assemble_request_headers(request_data):
     """
     headers = request_data.headers.copy()
     if "host" not in headers and request_data.scheme and request_data.host and request_data.port:
-        headers["host"] = utils.hostport(
+        headers["host"] = netlib.http.url.hostport(
             request_data.scheme,
             request_data.host,
             request_data.port

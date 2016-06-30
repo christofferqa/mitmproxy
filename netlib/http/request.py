@@ -1,17 +1,18 @@
 from __future__ import absolute_import, print_function, division
 
 import re
-import warnings
 
 import six
 from six.moves import urllib
 
-from netlib import utils
+from netlib import encoding
+from netlib import multidict
+from netlib import strutils
+from netlib.http import multipart
 from netlib.http import cookies
-from netlib.odict import ODict
-from .. import encoding
-from .headers import Headers
-from .message import Message, _native, _always_bytes, MessageData
+from netlib.http import headers as nheaders
+from netlib.http import message
+import netlib.http.url
 
 # This regex extracts & splits the host header into host and port.
 # Handles the edge case of IPv6 addresses containing colons.
@@ -19,11 +20,11 @@ from .message import Message, _native, _always_bytes, MessageData
 host_header_re = re.compile(r"^(?P<host>[^:]+|\[.+\])(?::(?P<port>\d+))?$")
 
 
-class RequestData(MessageData):
-    def __init__(self, first_line_format, method, scheme, host, port, path, http_version, headers=None, content=None,
+class RequestData(message.MessageData):
+    def __init__(self, first_line_format, method, scheme, host, port, path, http_version, headers=(), content=None,
                  timestamp_start=None, timestamp_end=None):
-        if not isinstance(headers, Headers):
-            headers = Headers(headers)
+        if not isinstance(headers, nheaders.Headers):
+            headers = nheaders.Headers(headers)
 
         self.first_line_format = first_line_format
         self.method = method
@@ -38,7 +39,7 @@ class RequestData(MessageData):
         self.timestamp_end = timestamp_end
 
 
-class Request(Message):
+class Request(message.Message):
     """
     An HTTP request.
     """
@@ -66,7 +67,7 @@ class Request(Message):
         """
         # TODO: Proper distinction between text and bytes.
         c = super(Request, self).replace(pattern, repl, flags)
-        self.path, pc = utils.safe_subn(
+        self.path, pc = strutils.safe_subn(
             pattern, repl, self.path, flags=flags
         )
         c += pc
@@ -90,22 +91,22 @@ class Request(Message):
         """
         HTTP request method, e.g. "GET".
         """
-        return _native(self.data.method).upper()
+        return message._native(self.data.method).upper()
 
     @method.setter
     def method(self, method):
-        self.data.method = _always_bytes(method)
+        self.data.method = message._always_bytes(method)
 
     @property
     def scheme(self):
         """
         HTTP request scheme, which should be "http" or "https".
         """
-        return _native(self.data.scheme)
+        return message._native(self.data.scheme)
 
     @scheme.setter
     def scheme(self, scheme):
-        self.data.scheme = _always_bytes(scheme)
+        self.data.scheme = message._always_bytes(scheme)
 
     @property
     def host(self):
@@ -167,11 +168,11 @@ class Request(Message):
         if self.data.path is None:
             return None
         else:
-            return _native(self.data.path)
+            return message._native(self.data.path)
 
     @path.setter
     def path(self, path):
-        self.data.path = _always_bytes(path)
+        self.data.path = message._always_bytes(path)
 
     @property
     def url(self):
@@ -180,11 +181,11 @@ class Request(Message):
         """
         if self.first_line_format == "authority":
             return "%s:%d" % (self.host, self.port)
-        return utils.unparse_url(self.scheme, self.host, self.port, self.path)
+        return netlib.http.url.unparse(self.scheme, self.host, self.port, self.path)
 
     @url.setter
     def url(self, url):
-        self.scheme, self.host, self.port, self.path = utils.parse_url(url)
+        self.scheme, self.host, self.port, self.path = netlib.http.url.parse(url)
 
     def _parse_host_header(self):
         """Extract the host and port from Host header"""
@@ -220,57 +221,76 @@ class Request(Message):
         """
         if self.first_line_format == "authority":
             return "%s:%d" % (self.pretty_host, self.port)
-        return utils.unparse_url(self.scheme, self.pretty_host, self.port, self.path)
+        return netlib.http.url.unparse(self.scheme, self.pretty_host, self.port, self.path)
 
     @property
     def query(self):
+        # type: () -> multidict.MultiDictView
         """
-        The request query string as an :py:class:`ODict` object.
-        None, if there is no query.
+        The request query string as an :py:class:`~netlib.multidict.MultiDictView` object.
         """
+        return multidict.MultiDictView(
+            self._get_query,
+            self._set_query
+        )
+
+    def _get_query(self):
         _, _, _, _, query, _ = urllib.parse.urlparse(self.url)
-        if query:
-            return ODict(utils.urldecode(query))
-        return None
+        return tuple(netlib.http.url.decode(query))
+
+    def _set_query(self, value):
+        query = netlib.http.url.encode(value)
+        scheme, netloc, path, params, _, fragment = urllib.parse.urlparse(self.url)
+        _, _, _, self.path = netlib.http.url.parse(
+            urllib.parse.urlunparse([scheme, netloc, path, params, query, fragment]))
 
     @query.setter
-    def query(self, odict):
-        query = utils.urlencode(odict.lst)
-        scheme, netloc, path, params, _, fragment = urllib.parse.urlparse(self.url)
-        _, _, _, self.path = utils.parse_url(
-                urllib.parse.urlunparse([scheme, netloc, path, params, query, fragment]))
+    def query(self, value):
+        self._set_query(value)
 
     @property
     def cookies(self):
+        # type: () -> multidict.MultiDictView
         """
         The request cookies.
-        An empty :py:class:`ODict` object if the cookie monster ate them all.
+
+        An empty :py:class:`~netlib.multidict.MultiDictView` object if the cookie monster ate them all.
         """
-        ret = ODict()
-        for i in self.headers.get_all("Cookie"):
-            ret.extend(cookies.parse_cookie_header(i))
-        return ret
+        return multidict.MultiDictView(
+            self._get_cookies,
+            self._set_cookies
+        )
+
+    def _get_cookies(self):
+        h = self.headers.get_all("Cookie")
+        return tuple(cookies.parse_cookie_headers(h))
+
+    def _set_cookies(self, value):
+        self.headers["cookie"] = cookies.format_cookie_header(value)
 
     @cookies.setter
-    def cookies(self, odict):
-        self.headers["cookie"] = cookies.format_cookie_header(odict)
+    def cookies(self, value):
+        self._set_cookies(value)
 
     @property
     def path_components(self):
         """
-        The URL's path components as a list of strings.
+        The URL's path components as a tuple of strings.
         Components are unquoted.
         """
         _, _, path, _, _, _ = urllib.parse.urlparse(self.url)
-        return [urllib.parse.unquote(i) for i in path.split("/") if i]
+        # This needs to be a tuple so that it's immutable.
+        # Otherwise, this would fail silently:
+        #   request.path_components.append("foo")
+        return tuple(urllib.parse.unquote(i) for i in path.split("/") if i)
 
     @path_components.setter
     def path_components(self, components):
         components = map(lambda x: urllib.parse.quote(x, safe=""), components)
         path = "/" + "/".join(components)
         scheme, netloc, _, params, query, fragment = urllib.parse.urlparse(self.url)
-        _, _, _, self.path = utils.parse_url(
-                urllib.parse.urlunparse([scheme, netloc, path, params, query, fragment]))
+        _, _, _, self.path = netlib.http.url.parse(
+            urllib.parse.urlunparse([scheme, netloc, path, params, query, fragment]))
 
     def anticache(self):
         """
@@ -309,64 +329,53 @@ class Request(Message):
     @property
     def urlencoded_form(self):
         """
-        The URL-encoded form data as an :py:class:`ODict` object.
-        None if there is no data or the content-type indicates non-form data.
+        The URL-encoded form data as an :py:class:`~netlib.multidict.MultiDictView` object.
+        An empty multidict.MultiDictView if the content-type indicates non-form data
+        or the content could not be parsed.
         """
-        is_valid_content_type = "application/x-www-form-urlencoded" in self.headers.get("content-type", "").lower()
-        if self.content and is_valid_content_type:
-            return ODict(utils.urldecode(self.content))
-        return None
+        return multidict.MultiDictView(
+            self._get_urlencoded_form,
+            self._set_urlencoded_form
+        )
 
-    @urlencoded_form.setter
-    def urlencoded_form(self, odict):
+    def _get_urlencoded_form(self):
+        is_valid_content_type = "application/x-www-form-urlencoded" in self.headers.get("content-type", "").lower()
+        if is_valid_content_type:
+            return tuple(netlib.http.url.decode(self.content))
+        return ()
+
+    def _set_urlencoded_form(self, value):
         """
         Sets the body to the URL-encoded form data, and adds the appropriate content-type header.
         This will overwrite the existing content if there is one.
         """
         self.headers["content-type"] = "application/x-www-form-urlencoded"
-        self.content = utils.urlencode(odict.lst)
+        self.content = netlib.http.url.encode(value)
+
+    @urlencoded_form.setter
+    def urlencoded_form(self, value):
+        self._set_urlencoded_form(value)
 
     @property
     def multipart_form(self):
         """
-        The multipart form data as an :py:class:`ODict` object.
-        None if there is no data or the content-type indicates non-form data.
+        The multipart form data as an :py:class:`~netlib.multidict.MultiDictView` object.
+        None if the content-type indicates non-form data.
         """
+        return multidict.MultiDictView(
+            self._get_multipart_form,
+            self._set_multipart_form
+        )
+
+    def _get_multipart_form(self):
         is_valid_content_type = "multipart/form-data" in self.headers.get("content-type", "").lower()
-        if self.content and is_valid_content_type:
-            return ODict(utils.multipartdecode(self.headers,self.content))
-        return None
+        if is_valid_content_type:
+            return multipart.decode(self.headers, self.content)
+        return ()
+
+    def _set_multipart_form(self, value):
+        raise NotImplementedError()
 
     @multipart_form.setter
     def multipart_form(self, value):
-        raise NotImplementedError()
-
-    # Legacy
-
-    def get_query(self):  # pragma: no cover
-        warnings.warn(".get_query is deprecated, use .query instead.", DeprecationWarning)
-        return self.query or ODict([])
-
-    def set_query(self, odict):  # pragma: no cover
-        warnings.warn(".set_query is deprecated, use .query instead.", DeprecationWarning)
-        self.query = odict
-
-    def get_path_components(self):  # pragma: no cover
-        warnings.warn(".get_path_components is deprecated, use .path_components instead.", DeprecationWarning)
-        return self.path_components
-
-    def set_path_components(self, lst):  # pragma: no cover
-        warnings.warn(".set_path_components is deprecated, use .path_components instead.", DeprecationWarning)
-        self.path_components = lst
-
-    def get_form_urlencoded(self):  # pragma: no cover
-        warnings.warn(".get_form_urlencoded is deprecated, use .urlencoded_form instead.", DeprecationWarning)
-        return self.urlencoded_form or ODict([])
-
-    def set_form_urlencoded(self, odict):  # pragma: no cover
-        warnings.warn(".set_form_urlencoded is deprecated, use .urlencoded_form instead.", DeprecationWarning)
-        self.urlencoded_form = odict
-
-    def get_form_multipart(self):  # pragma: no cover
-        warnings.warn(".get_form_multipart is deprecated, use .multipart_form instead.", DeprecationWarning)
-        return self.multipart_form or ODict([])
+        self._set_multipart_form(value)

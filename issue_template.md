@@ -10,10 +10,13 @@
 ##### What went wrong?
 
 
-##### Any other comments?
+##### Any other comments? What have you tried so far?
 
 
 ---
 
 Mitmproxy Version:
 Operating System:
+
+
+<!-- Please use the mitmproxy forums (https://discourse.mitmproxy.org/) for support/how-to questions. Thanks! :) -->

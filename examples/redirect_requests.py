@@ -4,6 +4,7 @@ This example shows two ways to redirect flows to other destinations.
 from mitmproxy.models import HTTPResponse
 from netlib.http import Headers
 
+
 def request(context, flow):
     # pretty_host takes the "Host" header of the request into account,
     # which is useful in transparent mode where we usually only have the IP
@@ -15,7 +16,7 @@ def request(context, flow):
             "HTTP/1.1", 200, "OK",
             Headers(Content_Type="text/html"),
             "helloworld")
-        flow.reply(resp)
+        flow.reply.send(resp)
 
     # Method 2: Redirect the request to a different server
     if flow.request.pretty_host.endswith("example.org"):

@@ -1,19 +1,26 @@
+from __future__ import absolute_import
+
 import itertools
 import time
 
+from six.moves import range
 import pyparsing as pp
 
 from . import http, http2, websockets, writer, exceptions
 
-from exceptions import *
-from base import Settings
-assert Settings  # prevent pyflakes from messing with this
+from .exceptions import RenderError, FileAccessDenied, ParseException
+from .base import Settings
+
+__all__ = [
+    "RenderError", "FileAccessDenied", "ParseException",
+    "Settings",
+]
 
 
 def expand(msg):
     times = getattr(msg, "times", None)
     if times:
-        for j_ in xrange(int(times.value)):
+        for j_ in range(int(times.value)):
             yield msg.strike_token("times")
     else:
         yield msg
@@ -24,7 +31,7 @@ def parse_pathod(s, use_http2=False):
         May raise ParseException
     """
     try:
-        s = s.decode("ascii")
+        s.encode("ascii")
     except UnicodeError:
         raise exceptions.ParseException("Spec must be valid ASCII.", 0, 0)
     try:
@@ -46,7 +53,7 @@ def parse_pathod(s, use_http2=False):
 
 def parse_pathoc(s, use_http2=False):
     try:
-        s = s.decode("ascii")
+        s.encode("ascii")
     except UnicodeError:
         raise exceptions.ParseException("Spec must be valid ASCII.", 0, 0)
     try:

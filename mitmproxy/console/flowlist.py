@@ -1,9 +1,10 @@
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, division
+
 import urwid
 
-import netlib.utils
-
-from . import common, signals
+import netlib.http.url
+from mitmproxy.console import common
+from mitmproxy.console import signals
 
 
 def _mkhelp():
@@ -21,6 +22,7 @@ def _mkhelp():
         ("l", "set limit filter pattern"),
         ("L", "load saved flows"),
         ("m", "toggle flow mark"),
+        ("M", "toggle marked flow view"),
         ("n", "create a new request"),
         ("P", "copy flow to clipboard"),
         ("r", "replay request"),
@@ -197,6 +199,12 @@ class ConnectionItem(urwid.WidgetWrap):
             else:
                 self.state.set_flow_marked(self.flow, True)
             signals.flowlist_change.send(self)
+        elif key == "M":
+            if self.state.mark_filter:
+                self.state.disable_marked_filter()
+            else:
+                self.state.enable_marked_filter()
+            signals.flowlist_change.send(self)
         elif key == "r":
             r = self.master.replay_request(self.flow)
             if r:
@@ -343,7 +351,7 @@ class FlowListBox(urwid.ListBox):
         )
 
     def new_request(self, url, method):
-        parts = netlib.utils.parse_url(str(url))
+        parts = netlib.http.url.parse(str(url))
         if not parts:
             signals.status_message.send(message="Invalid Url")
             return

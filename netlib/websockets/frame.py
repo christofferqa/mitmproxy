@@ -6,15 +6,17 @@ import warnings
 
 import six
 
-from .protocol import Masker
 from netlib import tcp
+from netlib import strutils
 from netlib import utils
+from netlib import human
+from netlib.websockets import protocol
 
 
 MAX_16_BIT_INT = (1 << 16)
 MAX_64_BIT_INT = (1 << 64)
 
-DEFAULT=object()
+DEFAULT = object()
 
 OPCODE = utils.BiDi(
     CONTINUE=0x00,
@@ -98,7 +100,7 @@ class FrameHeader(object):
         if self.masking_key:
             vals.append(":key=%s" % repr(self.masking_key))
         if self.payload_length:
-            vals.append(" %s" % utils.pretty_size(self.payload_length))
+            vals.append(" %s" % human.pretty_size(self.payload_length))
         return "".join(vals)
 
     def human_readable(self):
@@ -253,7 +255,7 @@ class Frame(object):
     def __repr__(self):
         ret = repr(self.header)
         if self.payload:
-            ret = ret + "\nPayload:\n" + utils.clean_bin(self.payload).decode("ascii")
+            ret = ret + "\nPayload:\n" + strutils.clean_bin(self.payload).decode("ascii")
         return ret
 
     def human_readable(self):
@@ -266,7 +268,7 @@ class Frame(object):
         """
         b = bytes(self.header)
         if self.header.masking_key:
-            b += Masker(self.header.masking_key)(self.payload)
+            b += protocol.Masker(self.header.masking_key)(self.payload)
         else:
             b += self.payload
         return b
@@ -295,7 +297,7 @@ class Frame(object):
         payload = fp.safe_read(header.payload_length)
 
         if header.mask == 1 and header.masking_key:
-            payload = Masker(header.masking_key)(payload)
+            payload = protocol.Masker(header.masking_key)(payload)
 
         return cls(
             payload,

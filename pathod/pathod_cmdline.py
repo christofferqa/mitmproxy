@@ -5,7 +5,18 @@ import os.path
 import re
 
 from netlib import tcp
-from . import pathod, version, utils
+from netlib import human
+from netlib import version
+from . import pathod
+
+
+def parse_anchor_spec(s):
+    """
+        Return a tuple, or None on error.
+    """
+    if "=" not in s:
+        return None
+    return tuple(s.split("=", 1))
 
 
 def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
@@ -49,12 +60,12 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
         help="""
             URL path specifying prefix for URL crafting
             commands. (%s)
-        """%pathod.DEFAULT_CRAFT_ANCHOR
+        """ % pathod.DEFAULT_CRAFT_ANCHOR
     )
     parser.add_argument(
         "--confdir",
-        action="store", type = str, dest="confdir", default='~/.mitmproxy',
-        help = "Configuration directory. (~/.mitmproxy)"
+        action="store", type=str, dest="confdir", default='~/.mitmproxy',
+        help="Configuration directory. (~/.mitmproxy)"
     )
     parser.add_argument(
         "-d", dest='staticdir', default=None, type=str,
@@ -75,16 +86,8 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
         type=str,
         help='Size limit of served responses. Understands size suffixes, i.e. 100k.')
     parser.add_argument(
-        "--noapi", dest='noapi', default=False, action="store_true",
-        help='Disable API.'
-    )
-    parser.add_argument(
         "--nohang", dest='nohang', default=False, action="store_true",
         help='Disable pauses during crafted response generation.'
-    )
-    parser.add_argument(
-        "--noweb", dest='noweb', default=False, action="store_true",
-        help='Disable both web interface and API.'
     )
     parser.add_argument(
         "--nocraft",
@@ -117,8 +120,8 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
     )
     group.add_argument(
         "--cert", dest='ssl_certs', default=[], type=str,
-        metavar = "SPEC", action="append",
-        help = """
+        metavar="SPEC", action="append",
+        help="""
         Add an SSL certificate. SPEC is of the form "[domain=]path". The domain
         may include a wildcard, and is equal to "*" if not specified. The file
         at path is a certificate in PEM format. If a private key is included in
@@ -177,7 +180,6 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
         help="Output all received & sent HTTP/2 frames"
     )
 
-
     args = parser.parse_args(argv[1:])
 
     args.ssl_version, args.ssl_options = tcp.sslversion_choices[args.ssl_version]
@@ -197,7 +199,7 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
 
     alst = []
     for i in args.anchors:
-        parts = utils.parse_anchor_spec(i)
+        parts = parse_anchor_spec(i)
         if not parts:
             return parser.error("Invalid anchor specification: %s" % i)
         alst.append(parts)
@@ -206,7 +208,7 @@ def args_pathod(argv, stdout_=sys.stdout, stderr_=sys.stderr):
     sizelimit = None
     if args.sizelimit:
         try:
-            sizelimit = utils.parse_size(args.sizelimit)
+            sizelimit = human.parse_size(args.sizelimit)
         except ValueError as v:
             return parser.error(v)
     args.sizelimit = sizelimit

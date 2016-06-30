@@ -1,14 +1,13 @@
 from setuptools import setup, find_packages
 from codecs import open
 import os
-import sys
 
 # Based on https://github.com/pypa/sampleproject/blob/master/setup.py
 # and https://python-packaging-user-guide.readthedocs.org/
 
 here = os.path.abspath(os.path.dirname(__file__))
 
-from mitmproxy import version
+from netlib import version
 
 with open(os.path.join(here, 'README.rst'), encoding='utf-8') as f:
     long_description = f.read()
@@ -65,22 +64,22 @@ setup(
         "certifi>=2015.11.20.1",  # no semver here - this should always be on the last release!
         "configargparse>=0.10, <0.11",
         "construct>=2.5.2, <2.6",
-        "cryptography>=1.3,<1.4",
-        "Flask>=0.10.1, <0.11",
+        "cryptography>=1.3, <1.5",
+        "Flask>=0.10.1, <0.12",
         "h2>=2.3.1, <3",
-        "html2text>=2016.1.8, <=2016.4.2",
+        "html2text>=2016.1.8, <=2016.5.29",
         "hyperframe>=4.0.1, <5",
         "lxml>=3.5.0, <3.7",
         "Pillow>=3.2, <3.3",
         "passlib>=1.6.5, <1.7",
+        "psutil>=4.2, <4.4",
         "pyasn1>=0.1.9, <0.2",
         "pyOpenSSL>=16.0, <17.0",
-        "pyparsing>=2.0,<2.1",  # 2.1.1 breaks our binaries, see https://sourceforge.net/p/pyparsing/bugs/93/
+        "pyparsing>=2.1.3, <2.2",
         "pyperclip>=1.5.22, <1.6",
-        "requests>=2.9.1, <2.10",
+        "requests>=2.9.1, <2.11",
         "six>=1.10, <1.11",
         "tornado>=4.3, <4.4",
-        "typing==3.5.1.0",
         "urwid>=1.3.1, <1.4",
         "watchdog>=0.8.3, <0.9",
     ],
@@ -95,28 +94,30 @@ setup(
         ':python_version == "2.7"': [
             "enum34>=1.0.4, <2",
             "ipaddress>=1.0.15, <1.1",
+            "typing==3.5.2.2",
         ],
         'dev': [
-            "coveralls>=1.1, <1.2",
-            "mock>=2.0,<2.1",
-            "pytest>=2.8.7,<2.10",
+            "tox>=2.3, <3",
+            "mock>=2.0, <2.1",
+            "pytest>=2.8.7, <2.10",
             "pytest-cov>=2.2.1, <2.3",
             "pytest-timeout>=1.0.0, <1.1",
             "pytest-xdist>=1.14, <1.15",
             "sphinx>=1.3.5, <1.5",
             "sphinx-autobuild>=0.5.2, <0.7",
-            "sphinxcontrib-documentedlist>=0.3.0, <0.4",
+            "sphinxcontrib-documentedlist>=0.4.0, <0.5",
             "sphinx_rtd_theme>=0.1.9, <0.2",
         ],
         'contentviews': [
             "cssutils>=1.0.1, <1.1",
-            "protobuf>=2.6.1, <2.7",
-            "pyamf>=0.8.0, <0.9",
+            # TODO: Find Python 3 replacements
+            # "protobuf>=2.6.1, <2.7",
+            # "pyamf>=0.8.0, <0.9",
         ],
         'examples': [
             "beautifulsoup4>=4.4.1, <4.5",
             "harparser>=0.2, <0.3",
-            "pytz>=2015.07.0, <=2016.3",
+            "pytz>=2015.07.0, <=2016.4",
         ]
     }
 )

@@ -1,13 +1,19 @@
-from __future__ import absolute_import, print_function
-import traceback
-import sys
-import click
-import itertools
+from __future__ import absolute_import, print_function, division
 
+import itertools
+import sys
+import traceback
+
+import click
+
+from mitmproxy import contentviews
+from mitmproxy import controller
+from mitmproxy import exceptions
+from mitmproxy import filt
+from mitmproxy import flow
+from netlib import human
 from netlib import tcp
-from netlib.utils import bytes_to_escaped_str, pretty_size
-from . import flow, filt, contentviews
-from .exceptions import ContentViewException, FlowReadException, ScriptException
+from netlib import strutils
 
 
 class DumpError(Exception):
@@ -74,8 +80,8 @@ class DumpMaster(flow.FlowMaster):
 
         if self.server and self.server.config.http2 and not tcp.HAS_ALPN:  # pragma: no cover
             print("ALPN support missing (OpenSSL 1.0.2+ required)!\n"
-                "HTTP/2 is disabled. Use --no-http2 to silence this warning.",
-                file=sys.stderr)
+                  "HTTP/2 is disabled. Use --no-http2 to silence this warning.",
+                  file=sys.stderr)
 
         if options.filtstr:
             self.filt = filt.parse(options.filtstr)
@@ -127,13 +133,13 @@ class DumpMaster(flow.FlowMaster):
         for command in scripts:
             try:
                 self.load_script(command, use_reloader=True)
-            except ScriptException as e:
+            except exceptions.ScriptException as e:
                 raise DumpError(str(e))
 
         if options.rfile:
             try:
                 self.load_flows_file(options.rfile)
-            except FlowReadException as v:
+            except exceptions.FlowReadException as v:
                 self.add_event("Flow file corrupted.", "error")
                 raise DumpError(v)
 
@@ -147,7 +153,7 @@ class DumpMaster(flow.FlowMaster):
         """
         try:
             return flow.read_flows_from_paths(paths)
-        except FlowReadException as e:
+        except exceptions.FlowReadException as e:
             raise DumpError(str(e))
 
     def add_event(self, e, level="info"):
@@ -175,8 +181,8 @@ class DumpMaster(flow.FlowMaster):
         if self.o.flow_detail >= 2:
             headers = "\r\n".join(
                 "{}: {}".format(
-                    click.style(bytes_to_escaped_str(k), fg="blue", bold=True),
-                    click.style(bytes_to_escaped_str(v), fg="blue"))
+                    click.style(strutils.bytes_to_escaped_str(k), fg="blue", bold=True),
+                    click.style(strutils.bytes_to_escaped_str(v), fg="blue"))
                 for k, v in message.headers.fields
             )
             self.echo(headers, indent=4)
@@ -192,7 +198,7 @@ class DumpMaster(flow.FlowMaster):
                         message.content,
                         headers=message.headers
                     )
-                except ContentViewException:
+                except exceptions.ContentViewException:
                     s = "Content viewer failed: \n" + traceback.format_exc()
                     self.add_event(s, "debug")
                     type, lines = contentviews.get_content_view(
@@ -238,7 +244,7 @@ class DumpMaster(flow.FlowMaster):
             stickycookie = ""
 
         if flow.client_conn:
-            client = click.style(bytes_to_escaped_str(flow.client_conn.address.host), bold=True)
+            client = click.style(strutils.bytes_to_escaped_str(flow.client_conn.address.host), bold=True)
         else:
             client = click.style("[replay]", fg="yellow", bold=True)
 
@@ -247,12 +253,12 @@ class DumpMaster(flow.FlowMaster):
             GET="green",
             DELETE="red"
         ).get(method.upper(), "magenta")
-        method = click.style(bytes_to_escaped_str(method), fg=method_color, bold=True)
+        method = click.style(strutils.bytes_to_escaped_str(method), fg=method_color, bold=True)
         if self.showhost:
             url = flow.request.pretty_url
         else:
             url = flow.request.url
-        url = click.style(bytes_to_escaped_str(url), bold=True)
+        url = click.style(strutils.bytes_to_escaped_str(url), bold=True)
 
         httpversion = ""
         if flow.request.http_version not in ("HTTP/1.1", "HTTP/1.0"):
@@ -282,12 +288,12 @@ class DumpMaster(flow.FlowMaster):
         elif 400 <= code < 600:
             code_color = "red"
         code = click.style(str(code), fg=code_color, bold=True, blink=(code == 418))
-        reason = click.style(bytes_to_escaped_str(flow.response.reason), fg=code_color, bold=True)
+        reason = click.style(strutils.bytes_to_escaped_str(flow.response.reason), fg=code_color, bold=True)
 
         if flow.response.content is None:
             size = "(content missing)"
         else:
-            size = pretty_size(len(flow.response.content))
+            size = human.pretty_size(len(flow.response.content))
         size = click.style(size, bold=True)
 
         arrows = click.style("<<", bold=True)
@@ -320,27 +326,28 @@ class DumpMaster(flow.FlowMaster):
             self.outfile.flush()
 
     def _process_flow(self, f):
-        self.state.delete_flow(f)
         if self.filt and not f.match(self.filt):
             return
 
         self.echo_flow(f)
 
-    def handle_request(self, f):
-        flow.FlowMaster.handle_request(self, f)
+    @controller.handler
+    def request(self, f):
+        f = flow.FlowMaster.request(self, f)
         if f:
-            f.reply()
+            self.state.delete_flow(f)
         return f
 
-    def handle_response(self, f):
-        flow.FlowMaster.handle_response(self, f)
+    @controller.handler
+    def response(self, f):
+        f = flow.FlowMaster.response(self, f)
         if f:
-            f.reply()
             self._process_flow(f)
         return f
 
-    def handle_error(self, f):
-        flow.FlowMaster.handle_error(self, f)
+    @controller.handler
+    def error(self, f):
+        flow.FlowMaster.error(self, f)
         if f:
             self._process_flow(f)
         return f

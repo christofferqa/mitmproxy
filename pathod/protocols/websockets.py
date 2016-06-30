@@ -18,7 +18,7 @@ class WebsocketsProtocol:
                     frm = websockets.Frame.from_file(self.pathod_handler.rfile)
                 except NetlibException as e:
                     lg("Error reading websocket frame: %s" % e)
-                    break
+                    return None, None
                 ended = time.time()
                 lg(frm.human_readable())
             retlog = dict(
@@ -37,7 +37,7 @@ class WebsocketsProtocol:
             if frm.payload.startswith(ld):
                 nest = frm.payload[len(ld):]
                 try:
-                    wf_gen = language.parse_websocket_frame(nest)
+                    wf_gen = language.parse_websocket_frame(nest.decode())
                 except language.exceptions.ParseException as v:
                     logger.write(
                         "Parse error in reflected frame specifcation:"

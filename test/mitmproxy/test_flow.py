@@ -4,9 +4,9 @@ from six.moves import cStringIO as StringIO
 import mock
 
 import netlib.utils
-from netlib import odict
 from netlib.http import Headers
-from mitmproxy import filt, controller, tnetstring, flow
+from mitmproxy import filt, controller, flow
+from mitmproxy.contrib import tnetstring
 from mitmproxy.exceptions import FlowReadException, ScriptException
 from mitmproxy.models import Error
 from mitmproxy.models import Flow
@@ -54,8 +54,8 @@ class TestStickyCookieState:
         assert s.domain_match("www.google.com", ".google.com")
         assert s.domain_match("google.com", ".google.com")
 
-    def test_handle_response(self):
-        c = "SSID=mooo; domain=.google.com, FOO=bar; Domain=.google.com; Path=/; "\
+    def test_response(self):
+        c = "SSID=mooo; domain=.google.com, FOO=bar; Domain=.google.com; Path=/; " \
             "Expires=Wed, 13-Jan-2021 22:23:01 GMT; Secure; "
 
         s, f = self._response(c, "host")
@@ -101,7 +101,7 @@ class TestStickyCookieState:
         assert len(s.jar[googlekey].keys()) == 1
         assert s.jar[googlekey]["somecookie"].items()[0][1] == "newvalue"
 
-    def test_handle_request(self):
+    def test_request(self):
         s, f = self._response("SSID=mooo", "www.google.com")
         assert "cookie" not in f.request.headers
         s.handle_request(f)
@@ -110,7 +110,7 @@ class TestStickyCookieState:
 
 class TestStickyAuthState:
 
-    def test_handle_response(self):
+    def test_response(self):
         s = flow.StickyAuthState(filt.parse(".*"))
         f = tutils.tflow(resp=True)
         f.request.headers["authorization"] = "foo"
@@ -389,22 +389,22 @@ class TestFlow(object):
         del b["id"]
         assert a == b
         assert not f == f2
-        assert not f is f2
+        assert f is not f2
         assert f.request.get_state() == f2.request.get_state()
-        assert not f.request is f2.request
+        assert f.request is not f2.request
         assert f.request.headers == f2.request.headers
-        assert not f.request.headers is f2.request.headers
+        assert f.request.headers is not f2.request.headers
         assert f.response.get_state() == f2.response.get_state()
-        assert not f.response is f2.response
+        assert f.response is not f2.response
 
         f = tutils.tflow(err=True)
         f2 = f.copy()
-        assert not f is f2
-        assert not f.request is f2.request
+        assert f is not f2
+        assert f.request is not f2.request
         assert f.request.headers == f2.request.headers
-        assert not f.request.headers is f2.request.headers
+        assert f.request.headers is not f2.request.headers
         assert f.error.get_state() == f2.error.get_state()
-        assert not f.error is f2.error
+        assert f.error is not f2.error
 
     def test_match(self):
         f = tutils.tflow(resp=True)
@@ -461,25 +461,20 @@ class TestFlow(object):
         fm = flow.FlowMaster(None, s)
         f = tutils.tflow()
         f.intercept(mock.Mock())
-        assert not f.reply.acked
         f.kill(fm)
-        assert f.reply.acked
+        for i in s.view:
+            assert "killed" in str(i.error)
 
     def test_killall(self):
         s = flow.State()
         fm = flow.FlowMaster(None, s)
 
         f = tutils.tflow()
-        fm.handle_request(f)
+        f.intercept(fm)
 
-        f = tutils.tflow()
-        fm.handle_request(f)
-
-        for i in s.view:
-            assert not i.reply.acked
         s.killall(fm)
         for i in s.view:
-            assert i.reply.acked
+            assert "killed" in str(i.error)
 
     def test_accept_intercept(self):
         f = tutils.tflow()
@@ -680,6 +675,10 @@ class TestSerialize:
         for i in range(3):
             f = tutils.tflow(err=True)
             w.add(f)
+        f = tutils.ttcpflow()
+        w.add(f)
+        f = tutils.ttcpflow(err=True)
+        w.add(f)
 
         sio.seek(0)
         return flow.FlowReader(sio)
@@ -763,13 +762,13 @@ class TestFlowMaster:
         s = flow.State()
         fm = flow.FlowMaster(None, s)
 
-        fm.load_script(tutils.test_data.path("scripts/a.py"))
-        fm.load_script(tutils.test_data.path("scripts/a.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/a.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/a.py"))
         fm.unload_scripts()
         with tutils.raises(ScriptException):
             fm.load_script("nonexistent")
         try:
-            fm.load_script(tutils.test_data.path("scripts/starterr.py"))
+            fm.load_script(tutils.test_data.path("data/scripts/starterr.py"))
         except ScriptException as e:
             assert "ValueError" in str(e)
         assert len(fm.scripts) == 0
@@ -798,39 +797,45 @@ class TestFlowMaster:
     def test_script_reqerr(self):
         s = flow.State()
         fm = flow.FlowMaster(None, s)
-        fm.load_script(tutils.test_data.path("scripts/reqerr.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/reqerr.py"))
         f = tutils.tflow()
-        fm.handle_clientconnect(f.client_conn)
-        assert fm.handle_request(f)
+        fm.clientconnect(f.client_conn)
+        assert fm.request(f)
 
     def test_script(self):
         s = flow.State()
         fm = flow.FlowMaster(None, s)
-        fm.load_script(tutils.test_data.path("scripts/all.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/all.py"))
         f = tutils.tflow(resp=True)
 
-        fm.handle_clientconnect(f.client_conn)
+        f.client_conn.acked = False
+        fm.clientconnect(f.client_conn)
         assert fm.scripts[0].ns["log"][-1] == "clientconnect"
-        fm.handle_serverconnect(f.server_conn)
+        f.server_conn.acked = False
+        fm.serverconnect(f.server_conn)
         assert fm.scripts[0].ns["log"][-1] == "serverconnect"
-        fm.handle_request(f)
+        f.reply.acked = False
+        fm.request(f)
         assert fm.scripts[0].ns["log"][-1] == "request"
-        fm.handle_response(f)
+        f.reply.acked = False
+        fm.response(f)
         assert fm.scripts[0].ns["log"][-1] == "response"
         # load second script
-        fm.load_script(tutils.test_data.path("scripts/all.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/all.py"))
         assert len(fm.scripts) == 2
-        fm.handle_clientdisconnect(f.server_conn)
+        f.server_conn.reply.acked = False
+        fm.clientdisconnect(f.server_conn)
         assert fm.scripts[0].ns["log"][-1] == "clientdisconnect"
         assert fm.scripts[1].ns["log"][-1] == "clientdisconnect"
 
         # unload first script
         fm.unload_scripts()
         assert len(fm.scripts) == 0
-        fm.load_script(tutils.test_data.path("scripts/all.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/all.py"))
 
         f.error = tutils.terr()
-        fm.handle_error(f)
+        f.reply.acked = False
+        fm.error(f)
         assert fm.scripts[0].ns["log"][-1] == "error"
 
     def test_duplicate_flow(self):
@@ -855,23 +860,22 @@ class TestFlowMaster:
         fm.anticache = True
         fm.anticomp = True
         f = tutils.tflow(req=None)
-        fm.handle_clientconnect(f.client_conn)
+        fm.clientconnect(f.client_conn)
         f.request = HTTPRequest.wrap(netlib.tutils.treq())
-        fm.handle_request(f)
+        fm.request(f)
         assert s.flow_count() == 1
 
         f.response = HTTPResponse.wrap(netlib.tutils.tresp())
-        fm.handle_response(f)
-        assert not fm.handle_response(None)
+        fm.response(f)
         assert s.flow_count() == 1
 
-        fm.handle_clientdisconnect(f.client_conn)
+        fm.clientdisconnect(f.client_conn)
 
         f.error = Error("msg")
         f.error.reply = controller.DummyReply()
-        fm.handle_error(f)
+        fm.error(f)
 
-        fm.load_script(tutils.test_data.path("scripts/a.py"))
+        fm.load_script(tutils.test_data.path("data/scripts/a.py"))
         fm.shutdown()
 
     def test_client_playback(self):
@@ -898,7 +902,7 @@ class TestFlowMaster:
         assert fm.state.flow_count()
 
         f.error = Error("error")
-        fm.handle_error(f)
+        fm.error(f)
 
     def test_server_playback(self):
         s = flow.State()
@@ -979,12 +983,14 @@ class TestFlowMaster:
         fm.set_stickycookie(".*")
         f = tutils.tflow(resp=True)
         f.response.headers["set-cookie"] = "foo=bar"
-        fm.handle_request(f)
-        fm.handle_response(f)
+        fm.request(f)
+        f.reply.acked = False
+        fm.response(f)
         assert fm.stickycookie_state.jar
-        assert not "cookie" in f.request.headers
+        assert "cookie" not in f.request.headers
         f = f.copy()
-        fm.handle_request(f)
+        f.reply.acked = False
+        fm.request(f)
         assert f.request.headers["cookie"] == "foo=bar"
 
     def test_stickyauth(self):
@@ -999,12 +1005,12 @@ class TestFlowMaster:
         fm.set_stickyauth(".*")
         f = tutils.tflow(resp=True)
         f.request.headers["authorization"] = "foo"
-        fm.handle_request(f)
+        fm.request(f)
 
         f = tutils.tflow(resp=True)
         assert fm.stickyauth_state.hosts
-        assert not "authorization" in f.request.headers
-        fm.handle_request(f)
+        assert "authorization" not in f.request.headers
+        fm.request(f)
         assert f.request.headers["authorization"] == "foo"
 
     def test_stream(self):
@@ -1020,15 +1026,15 @@ class TestFlowMaster:
             f = tutils.tflow(resp=True)
 
             fm.start_stream(file(p, "ab"), None)
-            fm.handle_request(f)
-            fm.handle_response(f)
+            fm.request(f)
+            fm.response(f)
             fm.stop_stream()
 
             assert r()[0].response
 
             f = tutils.tflow()
             fm.start_stream(file(p, "ab"), None)
-            fm.handle_request(f)
+            fm.request(f)
             fm.shutdown()
 
             assert not r()[1].response
@@ -1067,68 +1073,14 @@ class TestRequest:
         assert r.url == "https://address:22/path"
         assert r.pretty_url == "https://foo.com:22/path"
 
-    def test_path_components(self):
-        r = HTTPRequest.wrap(netlib.tutils.treq())
-        r.path = "/"
-        assert r.get_path_components() == []
-        r.path = "/foo/bar"
-        assert r.get_path_components() == ["foo", "bar"]
-        q = odict.ODict()
-        q["test"] = ["123"]
-        r.set_query(q)
-        assert r.get_path_components() == ["foo", "bar"]
-
-        r.set_path_components([])
-        assert r.get_path_components() == []
-        r.set_path_components(["foo"])
-        assert r.get_path_components() == ["foo"]
-        r.set_path_components(["/oo"])
-        assert r.get_path_components() == ["/oo"]
-        assert "%2F" in r.path
-
-    def test_getset_form_urlencoded(self):
-        d = odict.ODict([("one", "two"), ("three", "four")])
-        r = HTTPRequest.wrap(netlib.tutils.treq(content=netlib.utils.urlencode(d.lst)))
-        r.headers["content-type"] = "application/x-www-form-urlencoded"
-        assert r.get_form_urlencoded() == d
-
-        d = odict.ODict([("x", "y")])
-        r.set_form_urlencoded(d)
-        assert r.get_form_urlencoded() == d
-
-        r.headers["content-type"] = "foo"
-        assert not r.get_form_urlencoded()
-
-    def test_getset_query(self):
-        r = HTTPRequest.wrap(netlib.tutils.treq())
-        r.path = "/foo?x=y&a=b"
-        q = r.get_query()
-        assert q.lst == [("x", "y"), ("a", "b")]
-
-        r.path = "/"
-        q = r.get_query()
-        assert not q
-
-        r.path = "/?adsfa"
-        q = r.get_query()
-        assert q.lst == [("adsfa", "")]
-
-        r.path = "/foo?x=y&a=b"
-        assert r.get_query()
-        r.set_query(odict.ODict([]))
-        assert not r.get_query()
-        qv = odict.ODict([("a", "b"), ("c", "d")])
-        r.set_query(qv)
-        assert r.get_query() == qv
-
     def test_anticache(self):
         r = HTTPRequest.wrap(netlib.tutils.treq())
         r.headers = Headers()
         r.headers["if-modified-since"] = "test"
         r.headers["if-none-match"] = "test"
         r.anticache()
-        assert not "if-modified-since" in r.headers
-        assert not "if-none-match" in r.headers
+        assert "if-modified-since" not in r.headers
+        assert "if-none-match" not in r.headers
 
     def test_replace(self):
         r = HTTPRequest.wrap(netlib.tutils.treq())
@@ -1137,7 +1089,7 @@ class TestRequest:
         r.content = "afoob"
         assert r.replace("foo(?i)", "boo") == 4
         assert r.path == "path/boo"
-        assert not "foo" in r.content
+        assert "foo" not in r.content
         assert r.headers["boo"] == "boo"
 
     def test_constrain_encoding(self):
@@ -1179,7 +1131,7 @@ class TestResponse:
         r.headers["Foo"] = "fOo"
         r.content = "afoob"
         assert r.replace("foo(?i)", "boo") == 3
-        assert not "foo" in r.content
+        assert "foo" not in r.content
         assert r.headers["boo"] == "boo"
 
     def test_get_content_type(self):
@@ -1205,13 +1157,15 @@ class TestError:
         e3 = e.copy()
         assert e3.get_state() == e.get_state()
 
+    def test_repr(self):
+        e = Error("yay")
+        assert repr(e)
+
 
 class TestClientConnection:
-
     def test_state(self):
-
         c = tutils.tclient_conn()
-        assert ClientConnection.from_state(c.get_state()).get_state() ==\
+        assert ClientConnection.from_state(c.get_state()).get_state() == \
             c.get_state()
 
         c2 = tutils.tclient_conn()

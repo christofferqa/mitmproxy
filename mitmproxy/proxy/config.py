@@ -1,4 +1,5 @@
-from __future__ import (absolute_import, print_function, division)
+from __future__ import absolute_import, print_function, division
+
 import collections
 import os
 import re
@@ -6,18 +7,26 @@ import re
 import six
 from OpenSSL import SSL
 
-from netlib import certutils, tcp
+from mitmproxy import platform
+from netlib import certutils
+from netlib import human
+from netlib import tcp
 from netlib.http import authentication
-from netlib.tcp import Address, sslversion_choices
-
-from .. import utils, platform
 
 CONF_BASENAME = "mitmproxy"
 CA_DIR = "~/.mitmproxy"
 
 # We manually need to specify this, otherwise OpenSSL may select a non-HTTP2 cipher by default.
 # https://mozilla.github.io/server-side-tls/ssl-config-generator/?server=apache-2.2.15&openssl=1.0.2&hsts=yes&profile=old
-DEFAULT_CLIENT_CIPHERS = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA:ECDHE-RSA-DES-CBC3-SHA:ECDHE-ECDSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:AES:DES-CBC3-SHA:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!EDH-RSA-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA"
+DEFAULT_CLIENT_CIPHERS = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:" \
+    "ECDHE-ECDSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:kEDH+AESGCM:" \
+    "ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:" \
+    "ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA:" \
+    "DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:" \
+    "DHE-RSA-AES256-SHA:ECDHE-RSA-DES-CBC3-SHA:ECDHE-ECDSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:" \
+    "AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA:AES:DES-CBC3-SHA:" \
+    "HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:" \
+    "!EDH-DSS-DES-CBC3-SHA:!EDH-RSA-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA"
 
 
 class HostMatcher(object):
@@ -58,7 +67,7 @@ class ProxyConfig:
             body_size_limit=None,
             mode="regular",
             upstream_server=None,
-            upstream_auth = None,
+            upstream_auth=None,
             authenticator=None,
             ignore_hosts=tuple(),
             tcp_hosts=tuple(),
@@ -83,7 +92,7 @@ class ProxyConfig:
         self.body_size_limit = body_size_limit
         self.mode = mode
         if upstream_server:
-            self.upstream_server = ServerSpec(upstream_server[0], Address.wrap(upstream_server[1]))
+            self.upstream_server = ServerSpec(upstream_server[0], tcp.Address.wrap(upstream_server[1]))
             self.upstream_auth = upstream_auth
         else:
             self.upstream_server = None
@@ -103,9 +112,9 @@ class ProxyConfig:
             self.certstore.add_cert_file(spec, cert)
 
         self.openssl_method_client, self.openssl_options_client = \
-            sslversion_choices[ssl_version_client]
+            tcp.sslversion_choices[ssl_version_client]
         self.openssl_method_server, self.openssl_options_server = \
-            sslversion_choices[ssl_version_server]
+            tcp.sslversion_choices[ssl_version_server]
 
         if ssl_verify_upstream_cert:
             self.openssl_verification_mode_server = SSL.VERIFY_PEER
@@ -117,10 +126,12 @@ class ProxyConfig:
 
 
 def process_proxy_options(parser, options):
-    body_size_limit = utils.parse_size(options.body_size_limit)
+    body_size_limit = options.body_size_limit
+    if body_size_limit:
+        body_size_limit = human.parse_size(body_size_limit)
 
     c = 0
-    mode, upstream_server, upstream_auth  = "regular", None, None
+    mode, upstream_server, upstream_auth = "regular", None, None
     if options.transparent_proxy:
         c += 1
         if not platform.resolver:
@@ -161,7 +172,7 @@ def process_proxy_options(parser, options):
         options.clientcerts = os.path.expanduser(options.clientcerts)
         if not os.path.exists(options.clientcerts):
             return parser.error(
-                    "Client certificate path does not exist: %s" % options.clientcerts
+                "Client certificate path does not exist: %s" % options.clientcerts
             )
     if options.auth_nonanonymous or options.auth_singleuser or options.auth_htpasswd:
 
@@ -188,7 +199,7 @@ def process_proxy_options(parser, options):
                 password_manager = authentication.PassManHtpasswd(
                     options.auth_htpasswd)
             except ValueError as v:
-                return parser.error(v.message)
+                return parser.error(v)
         authenticator = authentication.BasicProxyAuth(password_manager, "mitmproxy")
     else:
         authenticator = authentication.NullProxyAuth(None)

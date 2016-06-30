@@ -5,6 +5,7 @@ var conf = require('./conf.js');
 
 // Sorted alphabetically!
 var babelify = require('babelify');
+var envify = require('envify/custom');
 var browserify = require('browserify');
 var gulp = require("gulp");
 var eslint = require('gulp-eslint');
@@ -91,6 +92,7 @@ function buildScript(bundler, filename, dev) {
     if (dev) {
         bundler = watchify(bundler);
     } else {
+        bundler = bundler.transform(envify({ _: 'purge', NODE_ENV: 'production' }), { global: true });
         bundler = bundler.transform({global: true}, uglifyify);
     }
 
@@ -142,6 +144,7 @@ function app_stream(dev) {
     var bundler = browserify({
         entries: [conf.js.app],
         debug: true,
+        extensions: ['.jsx'],
         cache: {}, // required for watchify
         packageCache: {} // required for watchify
     });

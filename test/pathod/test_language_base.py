@@ -1,7 +1,8 @@
 import os
 from pathod import language
 from pathod.language import base, exceptions
-import tutils
+
+from . import tutils
 
 
 def parse_request(s):
@@ -38,14 +39,14 @@ class TestTokValueNakedLiteral:
 
 class TestTokValueLiteral:
 
-    def test_espr(self):
+    def test_expr(self):
         v = base.TokValueLiteral("foo")
         assert v.expr()
-        assert v.val == "foo"
+        assert v.val == b"foo"
 
         v = base.TokValueLiteral("foo\n")
         assert v.expr()
-        assert v.val == "foo\n"
+        assert v.val == b"foo\n"
         assert repr(v)
 
     def test_spec(self):
@@ -55,8 +56,15 @@ class TestTokValueLiteral:
         v = base.TokValueLiteral("f\x00oo")
         assert v.spec() == repr(v) == r"'f\x00oo'"
 
-        v = base.TokValueLiteral("\"")
-        assert v.spec() == repr(v) == '\'"\''
+        v = base.TokValueLiteral('"')
+        assert v.spec() == repr(v) == """  '"'  """.strip()
+
+        # While pyparsing has a escChar argument for QuotedString,
+        # escChar only performs scapes single-character escapes and does not work for e.g. r"\x02".
+        # Thus, we cannot use that option, which means we cannot have single quotes in strings.
+        # To fix this, we represent single quotes as r"\x07".
+        v = base.TokValueLiteral("'")
+        assert v.spec() == r"'\x27'"
 
     def roundtrip(self, spec):
         e = base.TokValueLiteral.expr()
@@ -67,7 +75,7 @@ class TestTokValueLiteral:
 
     def test_roundtrip(self):
         self.roundtrip("'")
-        self.roundtrip('\'')
+        self.roundtrip(r"\'")
         self.roundtrip("a")
         self.roundtrip("\"")
         # self.roundtrip("\\")
@@ -132,7 +140,7 @@ class TestTokValueFile:
         with tutils.tmpdir() as t:
             p = os.path.join(t, "path")
             with open(p, "wb") as f:
-                f.write("x" * 10000)
+                f.write(b"x" * 10000)
 
             assert v.get_generator(language.Settings(staticdir=t))
 
@@ -171,19 +179,19 @@ class TestMisc:
     def test_generators(self):
         v = base.TokValue.parseString("'val'")[0]
         g = v.get_generator({})
-        assert g[:] == "val"
+        assert g[:] == b"val"
 
     def test_value(self):
-        assert base.TokValue.parseString("'val'")[0].val == "val"
-        assert base.TokValue.parseString('"val"')[0].val == "val"
-        assert base.TokValue.parseString('"\'val\'"')[0].val == "'val'"
+        assert base.TokValue.parseString("'val'")[0].val == b"val"
+        assert base.TokValue.parseString('"val"')[0].val == b"val"
+        assert base.TokValue.parseString('"\'val\'"')[0].val == b"'val'"
 
-    def test_value(self):
+    def test_value2(self):
         class TT(base.Value):
             preamble = "m"
         e = TT.expr()
         v = e.parseString("m'msg'")[0]
-        assert v.value.val == "msg"
+        assert v.value.val == b"msg"
 
         s = v.spec()
         assert s == e.parseString(s)[0].spec()
@@ -207,13 +215,13 @@ class TestMisc:
             p = os.path.join(t, "path")
             s = base.Settings(staticdir=t)
             with open(p, "wb") as f:
-                f.write("a" * 20)
+                f.write(b"a" * 20)
             v = e.parseString("m<path")[0]
             tutils.raises("invalid value length", v.values, s)
 
             p = os.path.join(t, "path")
             with open(p, "wb") as f:
-                f.write("a" * 4)
+                f.write(b"a" * 4)
             v = e.parseString("m<path")[0]
             assert v.values(s)
 
@@ -235,8 +243,8 @@ class TestKeyValue:
     def test_simple(self):
         e = TKeyValue.expr()
         v = e.parseString("h'foo'='bar'")[0]
-        assert v.key.val == "foo"
-        assert v.value.val == "bar"
+        assert v.key.val == b"foo"
+        assert v.value.val == b"bar"
 
         v2 = e.parseString(v.spec())[0]
         assert v2.key.val == v.key.val
@@ -289,9 +297,9 @@ def test_options_or_value():
             "three"
         ]
     e = TT.expr()
-    assert e.parseString("one")[0].value.val == "one"
-    assert e.parseString("'foo'")[0].value.val == "foo"
-    assert e.parseString("'get'")[0].value.val == "get"
+    assert e.parseString("one")[0].value.val == b"one"
+    assert e.parseString("'foo'")[0].value.val == b"foo"
+    assert e.parseString("'get'")[0].value.val == b"get"
 
     assert e.parseString("one")[0].spec() == "one"
     assert e.parseString("'foo'")[0].spec() == "'foo'"
@@ -311,7 +319,7 @@ def test_options_or_value():
 def test_integer():
     e = base.Integer.expr()
     v = e.parseString("200")[0]
-    assert v.string() == "200"
+    assert v.string() == b"200"
     assert v.spec() == "200"
 
     assert v.freeze({}).value == v.value

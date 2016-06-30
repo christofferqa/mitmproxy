@@ -1,7 +1,8 @@
 import string
 import lxml.html
 import lxml.etree
-from mitmproxy import utils, contentviews
+from mitmproxy import contentviews
+from netlib import strutils
 
 
 class ViewPigLatin(contentviews.View):
@@ -10,7 +11,7 @@ class ViewPigLatin(contentviews.View):
     content_types = ["text/html"]
 
     def __call__(self, data, **metadata):
-        if utils.isXML(data):
+        if strutils.isXML(data):
             parser = lxml.etree.HTMLParser(
                 strip_cdata=True,
                 remove_blank_text=True
@@ -23,7 +24,8 @@ class ViewPigLatin(contentviews.View):
                 ret = ''
                 for word in words:
                     idx = -1
-                    while word[idx] in string.punctuation and (idx * -1) != len(word): idx -= 1
+                    while word[idx] in string.punctuation and (idx * -1) != len(word):
+                        idx -= 1
                     if word[0].lower() in 'aeiou':
                         if idx == -1:
                             ret += word[0:] + "hay"
@@ -60,7 +62,7 @@ class ViewPigLatin(contentviews.View):
 pig_view = ViewPigLatin()
 
 
-def start(context, argv):
+def start(context):
     context.add_contentview(pig_view)
 
 

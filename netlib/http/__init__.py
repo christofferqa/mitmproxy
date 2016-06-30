@@ -1,14 +1,14 @@
 from __future__ import absolute_import, print_function, division
-from .request import Request
-from .response import Response
-from .headers import Headers
-from .message import decoded
-from . import http1, http2
+from netlib.http.request import Request
+from netlib.http.response import Response
+from netlib.http.headers import Headers, parse_content_type
+from netlib.http.message import decoded
+from netlib.http import http1, http2, status_codes, multipart
 
 __all__ = [
     "Request",
     "Response",
-    "Headers",
+    "Headers", "parse_content_type",
     "decoded",
-    "http1", "http2",
+    "http1", "http2", "status_codes", "multipart",
 ]

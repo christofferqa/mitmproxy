@@ -1,10 +1,14 @@
-from __future__ import (absolute_import, print_function, division)
+from __future__ import absolute_import, print_function, division
+
+import time
 import copy
 import uuid
 
-from .. import stateobject, utils, version
-from .connections import ClientConnection, ServerConnection
-from ..exceptions import Kill
+from mitmproxy import stateobject
+from mitmproxy.models.connections import ClientConnection
+from mitmproxy.models.connections import ServerConnection
+
+from netlib import version
 
 
 class Error(stateobject.StateObject):
@@ -30,7 +34,7 @@ class Error(stateobject.StateObject):
         @type timestamp: float
         """
         self.msg = msg
-        self.timestamp = timestamp or utils.timestamp()
+        self.timestamp = timestamp or time.time()
 
     _stateobject_attributes = dict(
         msg=str,
@@ -38,6 +42,9 @@ class Error(stateobject.StateObject):
     )
 
     def __str__(self):
+        return self.msg
+
+    def __repr__(self):
         return self.msg
 
     @classmethod
@@ -99,6 +106,12 @@ class Flow(stateobject.StateObject):
             self._backup = state.pop("backup")
         super(Flow, self).set_state(state)
 
+    @classmethod
+    def from_state(cls, state):
+        f = cls(None, None)
+        f.set_state(state)
+        return f
+
     def copy(self):
         f = copy.copy(self)
 
@@ -142,8 +155,8 @@ class Flow(stateobject.StateObject):
         """
         self.error = Error("Connection killed")
         self.intercepted = False
-        self.reply(Kill)
-        master.handle_error(self)
+        self.reply.kill()
+        master.error(self)
 
     def intercept(self, master):
         """
@@ -162,5 +175,5 @@ class Flow(stateobject.StateObject):
         if not self.intercepted:
             return
         self.intercepted = False
-        self.reply()
+        self.reply.ack()
         master.handle_accept_intercept(self)

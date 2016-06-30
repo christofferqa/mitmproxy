@@ -1,14 +1,18 @@
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, division
+
+import base64
 import os
 import re
-import base64
 
 import configargparse
 
-from netlib.tcp import Address, sslversion_choices
-import netlib.utils
-from . import filt, utils, version
-from .proxy import config
+from mitmproxy import filt
+from mitmproxy.proxy import config
+from netlib import human
+from netlib import strutils
+from netlib import tcp
+from netlib import version
+from netlib.http import url
 
 APP_HOST = "mitm.it"
 APP_PORT = 80
@@ -70,7 +74,7 @@ def parse_replace_hook(s):
     try:
         re.compile(regex)
     except re.error as e:
-        raise ParseException("Malformed replacement regex: %s" % str(e.message))
+        raise ParseException("Malformed replacement regex: %s" % str(e))
     return patt, regex, replacement
 
 
@@ -103,17 +107,17 @@ def parse_setheader(s):
     return _parse_hook(s)
 
 
-def parse_server_spec(url):
+def parse_server_spec(spec):
     try:
-        p = netlib.utils.parse_url(url)
-        if p[0] not in ("http", "https"):
+        p = url.parse(spec)
+        if p[0] not in (b"http", b"https"):
             raise ValueError()
     except ValueError:
         raise configargparse.ArgumentTypeError(
-            "Invalid server specification: %s" % url
+            "Invalid server specification: %s" % spec
         )
 
-    address = Address(p[1:3])
+    address = tcp.Address(p[1:3])
     scheme = p[0].lower()
     return config.ServerSpec(scheme, address)
 
@@ -124,7 +128,7 @@ def parse_upstream_auth(auth):
         raise configargparse.ArgumentTypeError(
             "Invalid upstream auth specification: %s" % auth
         )
-    return "Basic" + " " + base64.b64encode(auth)
+    return b"Basic" + b" " + base64.b64encode(strutils.always_bytes(auth))
 
 
 def get_common_options(options):
@@ -135,20 +139,22 @@ def get_common_options(options):
     if options.stickyauth_filt:
         stickyauth = options.stickyauth_filt
 
-    stream_large_bodies = utils.parse_size(options.stream_large_bodies)
+    stream_large_bodies = options.stream_large_bodies
+    if stream_large_bodies:
+        stream_large_bodies = human.parse_size(stream_large_bodies)
 
     reps = []
     for i in options.replace:
         try:
             p = parse_replace_hook(i)
         except ParseException as e:
-            raise configargparse.ArgumentTypeError(e.message)
+            raise configargparse.ArgumentTypeError(e)
         reps.append(p)
     for i in options.replace_file:
         try:
             patt, rex, path = parse_replace_hook(i)
         except ParseException as e:
-            raise configargparse.ArgumentTypeError(e.message)
+            raise configargparse.ArgumentTypeError(e)
         try:
             v = open(path, "rb").read()
         except IOError as e:
@@ -162,8 +168,20 @@ def get_common_options(options):
         try:
             p = parse_setheader(i)
         except ParseException as e:
-            raise configargparse.ArgumentTypeError(e.message)
+            raise configargparse.ArgumentTypeError(e)
         setheaders.append(p)
+
+    if options.outfile and options.outfile[0] == options.rfile:
+        if options.outfile[1] == "wb":
+            raise configargparse.ArgumentTypeError(
+                "Cannot use '{}' for both reading and writing flows. "
+                "Are you looking for --afile?".format(options.rfile)
+            )
+        else:
+            raise configargparse.ArgumentTypeError(
+                "Cannot use '{}' for both reading and appending flows. "
+                "That would trigger an infinite loop."
+            )
 
     return dict(
         app=options.app,
@@ -201,6 +219,11 @@ def basic_options(parser):
         '--version',
         action='version',
         version="%(prog)s" + " " + version.VERSION
+    )
+    parser.add_argument(
+        '--sysinfo',
+        action='store_true',
+        dest='sysinfo',
     )
     parser.add_argument(
         '--shortversion',
@@ -300,7 +323,7 @@ def basic_options(parser):
 
 
 def proxy_modes(parser):
-    group = parser.add_argument_group("Proxy Modes").add_mutually_exclusive_group()
+    group = parser.add_argument_group("Proxy Modes")
     group.add_argument(
         "-R", "--reverse",
         action="store",
@@ -462,14 +485,14 @@ def proxy_ssl_options(parser):
     group.add_argument(
         "--ssl-version-client", dest="ssl_version_client",
         default="secure", action="store",
-        choices=sslversion_choices.keys(),
+        choices=tcp.sslversion_choices.keys(),
         help="Set supported SSL/TLS versions for client connections. "
              "SSLv2, SSLv3 and 'all' are INSECURE. Defaults to secure, which is TLS1.0+."
     )
     group.add_argument(
         "--ssl-version-server", dest="ssl_version_server",
         default="secure", action="store",
-        choices=sslversion_choices.keys(),
+        choices=tcp.sslversion_choices.keys(),
         help="Set supported SSL/TLS versions for server connections. "
              "SSLv2, SSLv3 and 'all' are INSECURE. Defaults to secure, which is TLS1.0+."
     )

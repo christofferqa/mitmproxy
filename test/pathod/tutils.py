@@ -1,30 +1,37 @@
 import tempfile
 import re
 import shutil
-from six.moves import cStringIO as StringIO
-
-import netlib
-from pathod import utils, test, pathoc, pathod, language
-from netlib import tcp
 import requests
+from six.moves import cStringIO as StringIO
+from six.moves import urllib
+from six import BytesIO
+
+from netlib import tcp
+from netlib import utils
+from netlib import tutils
+
+from pathod import language
+from pathod import pathoc
+from pathod import pathod
+from pathod import test
+
 
 def treader(bytes):
     """
         Construct a tcp.Read object from bytes.
     """
-    fp = StringIO(bytes)
+    fp = BytesIO(bytes)
     return tcp.Reader(fp)
 
 
 class DaemonTests(object):
-    noweb = False
-    noapi = False
     nohang = False
     ssl = False
     timeout = None
     hexdump = False
     ssloptions = None
     nocraft = False
+    explain = True
 
     @classmethod
     def setup_class(cls):
@@ -40,15 +47,13 @@ class DaemonTests(object):
             ssl=cls.ssl,
             ssloptions=so,
             sizelimit=1 * 1024 * 1024,
-            noweb=cls.noweb,
-            noapi=cls.noapi,
             nohang=cls.nohang,
             timeout=cls.timeout,
             hexdump=cls.hexdump,
             nocraft=cls.nocraft,
             logreq=True,
             logresp=True,
-            explain=True
+            explain=cls.explain
         )
 
     @classmethod
@@ -57,10 +62,10 @@ class DaemonTests(object):
         shutil.rmtree(cls.confdir)
 
     def teardown(self):
-        if not (self.noweb or self.noapi):
-            self.d.clear_log()
+        self.d.wait_for_silence()
+        self.d.clear_log()
 
-    def getpath(self, path, params=None):
+    def _getpath(self, path, params=None):
         scheme = "https" if self.ssl else "http"
         resp = requests.get(
             "%s://localhost:%s/%s" % (
@@ -73,9 +78,31 @@ class DaemonTests(object):
         )
         return resp
 
+    def getpath(self, path, params=None):
+        logfp = StringIO()
+        c = pathoc.Pathoc(
+            ("localhost", self.d.port),
+            ssl=self.ssl,
+            fp=logfp,
+        )
+        with c.connect():
+            if params:
+                path = path + "?" + urllib.parse.urlencode(params)
+            resp = c.request("get:%s" % path)
+            return resp
+
     def get(self, spec):
-        resp = requests.get(self.d.p(spec), verify=False)
-        return resp
+        logfp = StringIO()
+        c = pathoc.Pathoc(
+            ("localhost", self.d.port),
+            ssl=self.ssl,
+            fp=logfp,
+        )
+        with c.connect():
+            resp = c.request(
+                "get:/p/%s" % urllib.parse.quote(spec)
+            )
+            return resp
 
     def pathoc(
         self,
@@ -100,27 +127,27 @@ class DaemonTests(object):
             fp=logfp,
             use_http2=use_http2,
         )
-        c.connect(connect_to)
-        ret = []
-        for i in specs:
-            resp = c.request(i)
-            if resp:
-                ret.append(resp)
-        for frm in c.wait():
-            ret.append(frm)
-        c.stop()
-        return ret, logfp.getvalue()
+        with c.connect(connect_to):
+            ret = []
+            for i in specs:
+                resp = c.request(i)
+                if resp:
+                    ret.append(resp)
+            for frm in c.wait():
+                ret.append(frm)
+            c.stop()
+            return ret, logfp.getvalue()
 
 
-tmpdir = netlib.tutils.tmpdir
+tmpdir = tutils.tmpdir
 
-raises = netlib.tutils.raises
+raises = tutils.raises
 
 test_data = utils.Data(__name__)
 
 
 def render(r, settings=language.Settings()):
     r = r.resolve(settings)
-    s = StringIO()
+    s = BytesIO()
     assert language.serve(r, s, settings)
     return s.getvalue()

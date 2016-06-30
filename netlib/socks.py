@@ -2,7 +2,8 @@ from __future__ import (absolute_import, print_function, division)
 import struct
 import array
 import ipaddress
-from . import tcp, utils
+
+from netlib import tcp, utils
 
 
 class SocksError(Exception):
@@ -147,7 +148,7 @@ class UsernamePasswordAuth(object):
 
 
 class UsernamePasswordAuthResponse(object):
-    __slots__  = ("ver", "status")
+    __slots__ = ("ver", "status")
 
     def __init__(self, ver, status):
         self.ver = ver

@@ -4,19 +4,25 @@ import warnings
 
 import six
 
-from .headers import Headers
-from .. import encoding, utils
+from netlib import encoding, strutils, basetypes
+from netlib.http import headers
 
 if six.PY2:  # pragma: no cover
-    _native = lambda x: x
-    _always_bytes = lambda x: x
+    def _native(x):
+        return x
+
+    def _always_bytes(x):
+        return x
 else:
-    # While the HTTP head _should_ be ASCII, it's not uncommon for certain headers to be utf-8 encoded.
-    _native = lambda x: x.decode("utf-8", "surrogateescape")
-    _always_bytes = lambda x: utils.always_bytes(x, "utf-8", "surrogateescape")
+    # While headers _should_ be ASCII, it's not uncommon for certain headers to be utf-8 encoded.
+    def _native(x):
+        return x.decode("utf-8", "surrogateescape")
+
+    def _always_bytes(x):
+        return strutils.always_bytes(x, "utf-8", "surrogateescape")
 
 
-class MessageData(utils.Serializable):
+class MessageData(basetypes.Serializable):
     def __eq__(self, other):
         if isinstance(other, MessageData):
             return self.__dict__ == other.__dict__
@@ -25,10 +31,13 @@ class MessageData(utils.Serializable):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+    def __hash__(self):
+        return hash(frozenset(self.__dict__.items()))
+
     def set_state(self, state):
         for k, v in state.items():
             if k == "headers":
-                v = Headers.from_state(v)
+                v = headers.Headers.from_state(v)
             setattr(self, k, v)
 
     def get_state(self):
@@ -38,11 +47,11 @@ class MessageData(utils.Serializable):
 
     @classmethod
     def from_state(cls, state):
-        state["headers"] = Headers.from_state(state["headers"])
+        state["headers"] = headers.Headers.from_state(state["headers"])
         return cls(**state)
 
 
-class Message(utils.Serializable):
+class Message(basetypes.Serializable):
     def __eq__(self, other):
         if isinstance(other, Message):
             return self.data == other.data
@@ -50,6 +59,9 @@ class Message(utils.Serializable):
 
     def __ne__(self, other):
         return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.data) ^ 1
 
     def get_state(self):
         return self.data.get_state()
@@ -59,7 +71,7 @@ class Message(utils.Serializable):
 
     @classmethod
     def from_state(cls, state):
-        state["headers"] = Headers.from_state(state["headers"])
+        state["headers"] = headers.Headers.from_state(state["headers"])
         return cls(**state)
 
     @property
@@ -188,7 +200,7 @@ class Message(utils.Serializable):
         replacements = 0
         if self.content:
             with decoded(self):
-                self.content, replacements = utils.safe_subn(
+                self.content, replacements = strutils.safe_subn(
                     pattern, repl, self.content, flags=flags
                 )
         replacements += self.headers.replace(pattern, repl, flags)

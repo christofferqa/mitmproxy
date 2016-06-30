@@ -1,17 +1,14 @@
-import datetime
+import time
 
-import netlib.utils
-import netlib.tcp
-import netlib.http
+import six
 
-TIMEFMT = '%d-%m-%y %H:%M:%S'
+from netlib import strutils, human
 
 
-def write_raw(fp, lines):
+def write_raw(fp, lines, timestamp=True):
     if fp:
-        fp.write(
-            "%s: " % datetime.datetime.now().strftime(TIMEFMT)
-        )
+        if timestamp:
+            fp.write(human.format_timestamp(time.time()))
         for i in lines:
             fp.write(i)
         fp.write("\n")
@@ -20,11 +17,12 @@ def write_raw(fp, lines):
 
 class LogCtx(object):
 
-    def __init__(self, fp, hex, rfile, wfile):
+    def __init__(self, fp, hex, timestamp, rfile, wfile):
         self.lines = []
         self.fp = fp
         self.suppressed = False
         self.hex = hex
+        self.timestamp = timestamp
         self.rfile, self.wfile = rfile, wfile
 
     def __enter__(self):
@@ -50,20 +48,21 @@ class LogCtx(object):
                 self.fp,
                 [
                     "\n".join(self.lines),
-                ]
+                ],
+                timestamp = self.timestamp
             )
         if exc_value:
-            raise exc_type, exc_value, traceback
+            six.reraise(exc_type, exc_value, traceback)
 
     def suppress(self):
         self.suppressed = True
 
     def dump(self, data, hexdump):
         if hexdump:
-            for line in netlib.utils.hexdump(data):
+            for line in strutils.hexdump(data):
                 self("\t%s %s %s" % line)
         else:
-            for i in netlib.utils.clean_bin(data).split("\n"):
+            for i in strutils.clean_bin(data).split(b"\n"):
                 self("\t%s" % i)
 
     def __call__(self, line):
@@ -71,13 +70,14 @@ class LogCtx(object):
 
 
 class ConnectionLogger:
-    def __init__(self, fp, hex, rfile, wfile):
+    def __init__(self, fp, hex, timestamp, rfile, wfile):
         self.fp = fp
         self.hex = hex
         self.rfile, self.wfile = rfile, wfile
+        self.timestamp = timestamp
 
     def ctx(self):
-        return LogCtx(self.fp, self.hex, self.rfile, self.wfile)
+        return LogCtx(self.fp, self.hex, self.timestamp, self.rfile, self.wfile)
 
     def write(self, lines):
-        write_raw(self.fp, lines)
+        write_raw(self.fp, lines, timestamp=self.timestamp)

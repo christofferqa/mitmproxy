@@ -1,11 +1,10 @@
-from six.moves import cStringIO as StringIO
+from six import BytesIO
 
-from pathod.language import actions
-from pathod import language
+from pathod.language import actions, parse_pathoc, parse_pathod, serve
 
 
 def parse_request(s):
-    return language.parse_pathoc(s).next()
+    return next(parse_pathoc(s))
 
 
 def test_unique_name():
@@ -16,9 +15,9 @@ def test_unique_name():
 class TestDisconnects:
 
     def test_parse_pathod(self):
-        a = language.parse_pathod("400:d0").next().actions[0]
+        a = next(parse_pathod("400:d0")).actions[0]
         assert a.spec() == "d0"
-        a = language.parse_pathod("400:dr").next().actions[0]
+        a = next(parse_pathod("400:dr")).actions[0]
         assert a.spec() == "dr"
 
     def test_at(self):
@@ -42,18 +41,18 @@ class TestDisconnects:
 class TestInject:
 
     def test_parse_pathod(self):
-        a = language.parse_pathod("400:ir,@100").next().actions[0]
+        a = next(parse_pathod("400:ir,@100")).actions[0]
         assert a.offset == "r"
         assert a.value.datatype == "bytes"
         assert a.value.usize == 100
 
-        a = language.parse_pathod("400:ia,@100").next().actions[0]
+        a = next(parse_pathod("400:ia,@100")).actions[0]
         assert a.offset == "a"
 
     def test_at(self):
         e = actions.InjectAt.expr()
         v = e.parseString("i0,'foo'")[0]
-        assert v.value.val == "foo"
+        assert v.value.val == b"foo"
         assert v.offset == 0
         assert isinstance(v, actions.InjectAt)
 
@@ -61,16 +60,16 @@ class TestInject:
         assert v.offset == "r"
 
     def test_serve(self):
-        s = StringIO()
-        r = language.parse_pathod("400:i0,'foo'").next()
-        assert language.serve(r, s, {})
+        s = BytesIO()
+        r = next(parse_pathod("400:i0,'foo'"))
+        assert serve(r, s, {})
 
     def test_spec(self):
         e = actions.InjectAt.expr()
         v = e.parseString("i0,'foo'")[0]
-        assert v.spec() == 'i0,"foo"'
+        assert v.spec() == "i0,'foo'"
 
-    def test_spec(self):
+    def test_spec2(self):
         e = actions.InjectAt.expr()
         v = e.parseString("i0,@100")[0]
         v2 = v.freeze({})
@@ -96,7 +95,7 @@ class TestPauses:
         assert v.offset == "a"
 
     def test_request(self):
-        r = language.parse_pathod('400:p10,10').next()
+        r = next(parse_pathod('400:p10,10'))
         assert r.actions[0].spec() == "p10,10"
 
     def test_spec(self):

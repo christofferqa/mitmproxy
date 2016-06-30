@@ -1,12 +1,10 @@
 from six.moves import cStringIO as StringIO
-import threading
+import time
+
 from six.moves import queue
 
-import requests
-import requests.packages.urllib3
 from . import pathod
-
-requests.packages.urllib3.disable_warnings()
+from netlib import basethread
 
 
 class Daemon:
@@ -39,39 +37,43 @@ class Daemon:
         """
         return "%s/p/%s" % (self.urlbase, spec)
 
-    def info(self):
-        """
-            Return some basic info about the remote daemon.
-        """
-        resp = requests.get("%s/api/info" % self.urlbase, verify=False)
-        return resp.json()
-
     def text_log(self):
         return self.logfp.getvalue()
+
+    def wait_for_silence(self, timeout=5):
+        self.thread.server.wait_for_silence(timeout=timeout)
+
+    def expect_log(self, n, timeout=5):
+        l = []
+        start = time.time()
+        while True:
+            l = self.log()
+            if time.time() - start >= timeout:
+                return None
+            if len(l) >= n:
+                break
+        return l
 
     def last_log(self):
         """
             Returns the last logged request, or None.
         """
-        l = self.log()
+        l = self.expect_log(1)
         if not l:
             return None
-        return l[0]
+        return l[-1]
 
     def log(self):
         """
             Return the log buffer as a list of dictionaries.
         """
-        resp = requests.get("%s/api/log" % self.urlbase, verify=False)
-        return resp.json()["log"]
+        return self.thread.server.get_log()
 
     def clear_log(self):
         """
             Clear the log.
         """
-        self.logfp.truncate(0)
-        resp = requests.get("%s/api/clear_log" % self.urlbase, verify=False)
-        return resp.ok
+        return self.thread.server.clear_log()
 
     def shutdown(self):
         """
@@ -81,13 +83,13 @@ class Daemon:
         self.thread.join()
 
 
-class _PaThread(threading.Thread):
+class _PaThread(basethread.BaseThread):
 
     def __init__(self, iface, q, ssl, daemonargs):
-        threading.Thread.__init__(self)
-        self.name = "PathodThread"
+        basethread.BaseThread.__init__(self, "PathodThread")
         self.iface, self.q, self.ssl = iface, q, ssl
         self.daemonargs = daemonargs
+        self.server = None
 
     def run(self):
         self.server = pathod.Pathod(

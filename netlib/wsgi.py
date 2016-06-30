@@ -1,14 +1,13 @@
 from __future__ import (absolute_import, print_function, division)
-from io import BytesIO, StringIO
-import urllib
+
 import time
 import traceback
-
 import six
+from io import BytesIO
 from six.moves import urllib
 
-from netlib.utils import always_bytes, native
-from . import http, tcp
+from netlib import http, tcp, strutils
+
 
 class ClientConn(object):
 
@@ -55,38 +54,38 @@ class WSGIAdaptor(object):
         self.app, self.domain, self.port, self.sversion = app, domain, port, sversion
 
     def make_environ(self, flow, errsoc, **extra):
-        path = native(flow.request.path, "latin-1")
+        path = strutils.native(flow.request.path, "latin-1")
         if '?' in path:
-            path_info, query = native(path, "latin-1").split('?', 1)
+            path_info, query = strutils.native(path, "latin-1").split('?', 1)
         else:
             path_info = path
             query = ''
         environ = {
             'wsgi.version': (1, 0),
-            'wsgi.url_scheme': native(flow.request.scheme, "latin-1"),
+            'wsgi.url_scheme': strutils.native(flow.request.scheme, "latin-1"),
             'wsgi.input': BytesIO(flow.request.content or b""),
             'wsgi.errors': errsoc,
             'wsgi.multithread': True,
             'wsgi.multiprocess': False,
             'wsgi.run_once': False,
             'SERVER_SOFTWARE': self.sversion,
-            'REQUEST_METHOD': native(flow.request.method, "latin-1"),
+            'REQUEST_METHOD': strutils.native(flow.request.method, "latin-1"),
             'SCRIPT_NAME': '',
             'PATH_INFO': urllib.parse.unquote(path_info),
             'QUERY_STRING': query,
-            'CONTENT_TYPE': native(flow.request.headers.get('Content-Type', ''), "latin-1"),
-            'CONTENT_LENGTH': native(flow.request.headers.get('Content-Length', ''), "latin-1"),
+            'CONTENT_TYPE': strutils.native(flow.request.headers.get('Content-Type', ''), "latin-1"),
+            'CONTENT_LENGTH': strutils.native(flow.request.headers.get('Content-Length', ''), "latin-1"),
             'SERVER_NAME': self.domain,
             'SERVER_PORT': str(self.port),
-            'SERVER_PROTOCOL': native(flow.request.http_version, "latin-1"),
+            'SERVER_PROTOCOL': strutils.native(flow.request.http_version, "latin-1"),
         }
         environ.update(extra)
         if flow.client_conn.address:
-            environ["REMOTE_ADDR"] = native(flow.client_conn.address.host, "latin-1")
+            environ["REMOTE_ADDR"] = strutils.native(flow.client_conn.address.host, "latin-1")
             environ["REMOTE_PORT"] = flow.client_conn.address.port
 
         for key, value in flow.request.headers.items():
-            key = 'HTTP_' + native(key, "latin-1").upper().replace('-', '_')
+            key = 'HTTP_' + strutils.native(key, "latin-1").upper().replace('-', '_')
             if key not in ('HTTP_CONTENT_TYPE', 'HTTP_CONTENT_LENGTH'):
                 environ[key] = value
         return environ
@@ -140,7 +139,7 @@ class WSGIAdaptor(object):
             elif state["status"]:
                 raise AssertionError('Response already started')
             state["status"] = status
-            state["headers"] = http.Headers([[always_bytes(k), always_bytes(v)] for k,v in headers])
+            state["headers"] = http.Headers([[strutils.always_bytes(k), strutils.always_bytes(v)] for k, v in headers])
             if exc_info:
                 self.error_page(soc, state["headers_sent"], traceback.format_tb(exc_info[2]))
                 state["headers_sent"] = True
@@ -154,7 +153,7 @@ class WSGIAdaptor(object):
                 write(i)
             if not state["headers_sent"]:
                 write(b"")
-        except Exception as e:
+        except Exception:
             try:
                 s = traceback.format_exc()
                 errs.write(s.encode("utf-8", "replace"))

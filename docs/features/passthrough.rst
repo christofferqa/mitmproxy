@@ -10,7 +10,8 @@ mechanism:
   mitmproxy's interception leads to errors. For example, the Twitter app, Windows Update or
   the Apple App Store fail to work if mitmproxy is active.
 - **Convenience:** You really don't care about some parts of the traffic and just want them to go
-  away.
+  away. Note that mitmproxy's "Limit" option is often the better alternative here, as it is
+  not affected by the limitations listed below.
 
 If you want to peek into (SSL-protected) non-HTTP connections, check out the :ref:`tcpproxy`
 feature.
@@ -20,21 +21,24 @@ take a look at the :ref:`responsestreaming` feature.
 How it works
 ------------
 
-================== =============================
-command-line       :option:`--ignore regex`
+================== ======================
+command-line       ``--ignore regex``
 mitmproxy shortcut :kbd:`o` then :kbd:`I`
-================== =============================
+================== ======================
 
 
 mitmproxy allows you to specify a regex which is matched against a ``host:port`` string
 (e.g. "example.com:443") to determine hosts that should be excluded.
 
+Limitations
+-----------
+
 There are two important quirks to consider:
 
 - **In transparent mode, the ignore pattern is matched against the IP and ClientHello SNI host.** While we usually infer the
-  hostname from the Host header if the :option:`--host` argument is passed to mitmproxy, we do not
+  hostname from the Host header if the ``--host`` argument is passed to mitmproxy, we do not
   have access to this information before the SSL handshake. If the client uses SNI however, then we treat the SNI host as an ignore target.
-- In regular mode, explicit HTTP requests are never ignored. [#explicithttp]_ The ignore pattern is
+- **In regular mode, explicit HTTP requests are never ignored.** [#explicithttp]_ The ignore pattern is
   applied on CONNECT requests, which initiate HTTPS or clear-text WebSocket connections.
 
 Tutorial
@@ -42,7 +46,7 @@ Tutorial
 
 If you just want to ignore one specific domain, there's usually a bulletproof method to do so:
 
-1. Run mitmproxy or mitmdump in verbose mode (:option:`-v`) and observe the ``host:port``
+1. Run mitmproxy or mitmdump in verbose mode (``-v``) and observe the ``host:port``
    information in the serverconnect messages. mitmproxy will filter on these.
 2. Take the ``host:port`` string, surround it with ^ and $, escape all dots (. becomes \\.)
    and use this as your ignore pattern:
@@ -86,6 +90,7 @@ Here are some other examples for ignore patterns:
 
     - :ref:`tcpproxy`
     - :ref:`responsestreaming`
+    - mitmproxy's "Limit" feature
 
 .. rubric:: Footnotes
 

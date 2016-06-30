@@ -1,9 +1,14 @@
+from __future__ import absolute_import, print_function, division
+
 import os.path
 
 import urwid
 
-import netlib.utils
-from . import pathedit, signals, common
+import netlib.http.url
+from mitmproxy.console import common
+from mitmproxy.console import pathedit
+from mitmproxy.console import signals
+from netlib import human
 
 
 class ActionBar(urwid.WidgetWrap):
@@ -163,6 +168,10 @@ class StatusBar(urwid.WidgetWrap):
             r.append("[")
             r.append(("heading_key", "l"))
             r.append(":%s]" % self.master.state.limit_txt)
+        if self.master.state.mark_filter:
+            r.append("[")
+            r.append(("heading_key", "Marked Flows"))
+            r.append("]")
         if self.master.stickycookie_txt:
             r.append("[")
             r.append(("heading_key", "t"))
@@ -193,7 +202,7 @@ class StatusBar(urwid.WidgetWrap):
             opts.append("following")
         if self.master.stream_large_bodies:
             opts.append(
-                "stream:%s" % netlib.utils.pretty_size(
+                "stream:%s" % human.pretty_size(
                     self.master.stream_large_bodies.max_size
                 )
             )
@@ -203,7 +212,7 @@ class StatusBar(urwid.WidgetWrap):
 
         if self.master.server.config.mode in ["reverse", "upstream"]:
             dst = self.master.server.config.upstream_server
-            r.append("[dest:%s]" % netlib.utils.unparse_url(
+            r.append("[dest:%s]" % netlib.http.url.unparse(
                 dst.scheme,
                 dst.address.host,
                 dst.address.port

@@ -1,6 +1,5 @@
 from __future__ import absolute_import, print_function, division
 from io import BytesIO
-import textwrap
 from mock import Mock
 from netlib.exceptions import HttpException, HttpSyntaxException, HttpReadDisconnect, TcpDisconnect
 from netlib.http import Headers
@@ -8,9 +7,20 @@ from netlib.http.http1.read import (
     read_request, read_response, read_request_head,
     read_response_head, read_body, connection_close, expected_http_body_size, _get_first_line,
     _read_request_line, _parse_authority_form, _read_response_line, _check_http_version,
-    _read_headers, _read_chunked
+    _read_headers, _read_chunked, get_header_tokens
 )
 from netlib.tutils import treq, tresp, raises
+
+
+def test_get_header_tokens():
+    headers = Headers()
+    assert get_header_tokens(headers, "foo") == []
+    headers["foo"] = "bar"
+    assert get_header_tokens(headers, "foo") == ["bar"]
+    headers["foo"] = "bar, voing"
+    assert get_header_tokens(headers, "foo") == ["bar", "voing"]
+    headers.set_all("foo", ["bar, voing", "oink"])
+    assert get_header_tokens(headers, "foo") == ["bar", "voing", "oink"]
 
 
 def test_read_request():
@@ -106,6 +116,7 @@ class TestReadBody(object):
         rfile = BytesIO(b"123456")
         assert list(read_body(rfile, -1, max_chunk_size=1)) == [b"1", b"2", b"3", b"4", b"5", b"6"]
 
+
 def test_connection_close():
     headers = Headers()
     assert connection_close(b"HTTP/1.0", headers)
@@ -120,6 +131,7 @@ def test_connection_close():
     headers["connection"] = "foobar"
     assert connection_close(b"HTTP/1.0", headers)
     assert not connection_close(b"HTTP/1.1", headers)
+
 
 def test_expected_http_body_size():
     # Expect: 100-continue
@@ -203,6 +215,7 @@ def test_read_request_line():
     with raises(HttpReadDisconnect):
         t(b"")
 
+
 def test_parse_authority_form():
     assert _parse_authority_form(b"foo:42") == (b"foo", 42)
     with raises(HttpSyntaxException):
@@ -261,7 +274,7 @@ class TestReadHeaders(object):
             b"\r\n"
         )
         headers = self._read(data)
-        assert headers.fields == [[b"Header", b"one"], [b"Header2", b"two"]]
+        assert headers.fields == ((b"Header", b"one"), (b"Header2", b"two"))
 
     def test_read_multi(self):
         data = (
@@ -270,7 +283,7 @@ class TestReadHeaders(object):
             b"\r\n"
         )
         headers = self._read(data)
-        assert headers.fields == [[b"Header", b"one"], [b"Header", b"two"]]
+        assert headers.fields == ((b"Header", b"one"), (b"Header", b"two"))
 
     def test_read_continued(self):
         data = (
@@ -280,7 +293,7 @@ class TestReadHeaders(object):
             b"\r\n"
         )
         headers = self._read(data)
-        assert headers.fields == [[b"Header", b"one\r\n two"], [b"Header2", b"three"]]
+        assert headers.fields == ((b"Header", b"one\r\n two"), (b"Header2", b"three"))
 
     def test_read_continued_err(self):
         data = b"\tfoo: bar\r\n"
@@ -300,7 +313,8 @@ class TestReadHeaders(object):
     def test_read_empty_value(self):
         data = b"bar:"
         headers = self._read(data)
-        assert headers.fields == [[b"bar", b""]]
+        assert headers.fields == ((b"bar", b""),)
+
 
 def test_read_chunked():
     req = treq(content=None)

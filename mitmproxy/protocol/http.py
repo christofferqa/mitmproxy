@@ -1,30 +1,21 @@
-from __future__ import (absolute_import, print_function, division)
+from __future__ import absolute_import, print_function, division
 
+import time
 import sys
 import traceback
+
+import h2.exceptions
 import six
 
+import netlib.exceptions
+from mitmproxy import exceptions
+from mitmproxy import models
+from mitmproxy.protocol import base
+from netlib import http
 from netlib import tcp
-from netlib.exceptions import HttpException, HttpReadDisconnect, NetlibException
-from netlib.http import Headers
-
-from h2.exceptions import H2Error
-
-from .. import utils
-from ..exceptions import HttpProtocolException, ProtocolException
-from ..models import (
-    HTTPFlow,
-    HTTPResponse,
-    make_error_response,
-    make_connect_response,
-    Error,
-    expect_continue_response
-)
-
-from .base import Layer
 
 
-class _HttpTransmissionLayer(Layer):
+class _HttpTransmissionLayer(base.Layer):
 
     def read_request(self):
         raise NotImplementedError()
@@ -51,7 +42,7 @@ class _HttpTransmissionLayer(Layer):
 
     def send_response(self, response):
         if response.content is None:
-            raise HttpException("Cannot assemble flow with missing content")
+            raise netlib.exceptions.HttpException("Cannot assemble flow with missing content")
         self.send_response_headers(response)
         self.send_response_body(response, [response.content])
 
@@ -89,7 +80,7 @@ class ConnectServerConnection(object):
         __nonzero__ = __bool__
 
 
-class UpstreamConnectLayer(Layer):
+class UpstreamConnectLayer(base.Layer):
 
     def __init__(self, ctx, connect_request):
         super(UpstreamConnectLayer, self).__init__(ctx)
@@ -107,7 +98,7 @@ class UpstreamConnectLayer(Layer):
         self.send_request(self.connect_request)
         resp = self.read_response(self.connect_request)
         if resp.status_code != 200:
-            raise ProtocolException("Reconnect: Upstream server refuses CONNECT request")
+            raise exceptions.ProtocolException("Reconnect: Upstream server refuses CONNECT request")
 
     def connect(self):
         if not self.server_conn:
@@ -120,7 +111,7 @@ class UpstreamConnectLayer(Layer):
         if address != self.server_conn.via.address:
             self.ctx.set_server(address)
 
-    def set_server(self, address, server_tls=None, sni=None):
+    def set_server(self, address):
         if self.ctx.server_conn:
             self.ctx.disconnect()
         address = tcp.Address.wrap(address)
@@ -128,13 +119,8 @@ class UpstreamConnectLayer(Layer):
         self.connect_request.port = address.port
         self.server_conn.address = address
 
-        if server_tls:
-            raise ProtocolException(
-                "Cannot upgrade to TLS, no TLS layer on the protocol stack."
-            )
 
-
-class HttpLayer(Layer):
+class HttpLayer(base.Layer):
 
     def __init__(self, ctx, mode):
         super(HttpLayer, self).__init__(ctx)
@@ -149,7 +135,7 @@ class HttpLayer(Layer):
 
     def __call__(self):
         if self.mode == "transparent":
-            self.__initial_server_tls = self._server_tls
+            self.__initial_server_tls = self.server_tls
             self.__initial_server_conn = self.server_conn
         while True:
             try:
@@ -171,16 +157,16 @@ class HttpLayer(Layer):
                     self.handle_regular_mode_connect(request)
                     return
 
-            except HttpReadDisconnect:
+            except netlib.exceptions.HttpReadDisconnect:
                 # don't throw an error for disconnects that happen before/between requests.
                 return
-            except NetlibException as e:
+            except netlib.exceptions.NetlibException as e:
                 self.send_error_response(400, repr(e))
-                six.reraise(ProtocolException, ProtocolException(
+                six.reraise(exceptions.ProtocolException, exceptions.ProtocolException(
                     "Error in HTTP connection: %s" % repr(e)), sys.exc_info()[2])
 
             try:
-                flow = HTTPFlow(self.client_conn, self.server_conn, live=self)
+                flow = models.HTTPFlow(self.client_conn, self.server_conn, live=self)
                 flow.request = request
                 # set upstream auth
                 if self.mode == "upstream" and self.config.upstream_auth is not None:
@@ -215,16 +201,16 @@ class HttpLayer(Layer):
                     self.handle_upstream_mode_connect(flow.request.copy())
                     return
 
-            except (ProtocolException, NetlibException) as e:
+            except (exceptions.ProtocolException, netlib.exceptions.NetlibException) as e:
                 self.send_error_response(502, repr(e))
 
                 if not flow.response:
-                    flow.error = Error(str(e))
+                    flow.error = models.Error(str(e))
                     self.channel.ask("error", flow)
                     self.log(traceback.format_exc(), "debug")
                     return
                 else:
-                    six.reraise(ProtocolException, ProtocolException(
+                    six.reraise(exceptions.ProtocolException, exceptions.ProtocolException(
                         "Error in HTTP connection: %s" % repr(e)), sys.exc_info()[2])
             finally:
                 if flow:
@@ -234,16 +220,16 @@ class HttpLayer(Layer):
         request = self.read_request()
         if request.headers.get("expect", "").lower() == "100-continue":
             # TODO: We may have to use send_response_headers for HTTP2 here.
-            self.send_response(expect_continue_response)
+            self.send_response(models.expect_continue_response)
             request.headers.pop("expect")
             request.body = b"".join(self.read_request_body(request))
         return request
 
     def send_error_response(self, code, message):
         try:
-            response = make_error_response(code, message)
+            response = models.make_error_response(code, message)
             self.send_response(response)
-        except (NetlibException, H2Error):
+        except (netlib.exceptions.NetlibException, h2.exceptions.H2Error, exceptions.Http2ProtocolException):
             self.log(traceback.format_exc(), "debug")
 
     def change_upstream_proxy_server(self, address):
@@ -254,7 +240,7 @@ class HttpLayer(Layer):
 
     def handle_regular_mode_connect(self, request):
         self.set_server((request.host, request.port))
-        self.send_response(make_connect_response(request.data.http_version))
+        self.send_response(models.make_connect_response(request.data.http_version))
         layer = self.ctx.next_layer(self)
         layer()
 
@@ -279,7 +265,7 @@ class HttpLayer(Layer):
             if callable(flow.response.stream):
                 chunks = flow.response.stream(chunks)
             self.send_response_body(flow.response, chunks)
-            flow.response.timestamp_end = utils.timestamp()
+            flow.response.timestamp_end = time.time()
 
     def get_response_from_server(self, flow):
         def get_response():
@@ -288,9 +274,9 @@ class HttpLayer(Layer):
 
         try:
             get_response()
-        except NetlibException as v:
+        except netlib.exceptions.NetlibException as e:
             self.log(
-                "server communication error: %s" % repr(v),
+                "server communication error: %s" % repr(e),
                 level="debug"
             )
             # In any case, we try to reconnect at least once. This is
@@ -304,6 +290,11 @@ class HttpLayer(Layer):
             # > server detects timeout, disconnects
             # > read (100-n)% of large request
             # > send large request upstream
+
+            if isinstance(e, exceptions.Http2ProtocolException):
+                # do not try to reconnect for HTTP2
+                raise exceptions.ProtocolException("First and only attempt to get response via HTTP2 failed.")
+
             self.disconnect()
             self.connect()
             get_response()
@@ -319,7 +310,7 @@ class HttpLayer(Layer):
                 flow.request,
                 flow.response
             ))
-        flow.response.timestamp_end = utils.timestamp()
+        flow.response.timestamp_end = time.time()
 
         # no further manipulation of self.server_conn beyond this point
         # we can safely set it as the final attribute value here.
@@ -345,7 +336,7 @@ class HttpLayer(Layer):
             flow.request.scheme = "https" if self.__initial_server_tls else "http"
 
         request_reply = self.channel.ask("request", flow)
-        if isinstance(request_reply, HTTPResponse):
+        if isinstance(request_reply, models.HTTPResponse):
             flow.response = request_reply
             return
 
@@ -355,8 +346,9 @@ class HttpLayer(Layer):
 
         if self.mode == "regular" or self.mode == "transparent":
             # If there's an existing connection that doesn't match our expectations, kill it.
-            if address != self.server_conn.address or tls != self.server_conn.tls_established:
-                self.set_server(address, tls, address.host)
+            if address != self.server_conn.address or tls != self.server_tls:
+                self.set_server(address)
+                self.set_server_tls(tls, address.host)
             # Establish connection is neccessary.
             if not self.server_conn:
                 self.connect()
@@ -364,7 +356,7 @@ class HttpLayer(Layer):
             if not self.server_conn:
                 self.connect()
             if tls:
-                raise HttpProtocolException("Cannot change scheme in upstream proxy mode.")
+                raise exceptions.HttpProtocolException("Cannot change scheme in upstream proxy mode.")
             """
             # This is a very ugly (untested) workaround to solve a very ugly problem.
             if self.server_conn and self.server_conn.tls_established and not ssl:
@@ -382,7 +374,7 @@ class HttpLayer(Layer):
 
     def validate_request(self, request):
         if request.first_line_format == "absolute" and request.scheme != "http":
-            raise HttpException("Invalid request scheme: %s" % request.scheme)
+            raise netlib.exceptions.HttpException("Invalid request scheme: %s" % request.scheme)
 
         expected_request_forms = {
             "regular": ("authority", "absolute",),
@@ -395,7 +387,7 @@ class HttpLayer(Layer):
             err_message = "Invalid HTTP request form (expected: %s, got: %s)" % (
                 " or ".join(allowed_request_forms), request.first_line_format
             )
-            raise HttpException(err_message)
+            raise netlib.exceptions.HttpException(err_message)
 
         if self.mode == "regular" and request.first_line_format == "absolute":
             request.first_line_format = "relative"
@@ -405,10 +397,10 @@ class HttpLayer(Layer):
             if self.config.authenticator.authenticate(request.headers):
                 self.config.authenticator.clean(request.headers)
             else:
-                self.send_response(make_error_response(
+                self.send_response(models.make_error_response(
                     407,
                     "Proxy Authentication Required",
-                    Headers(**self.config.authenticator.auth_challenge_headers())
+                    http.Headers(**self.config.authenticator.auth_challenge_headers())
                 ))
                 return False
         return True

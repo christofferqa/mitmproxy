@@ -1,16 +1,16 @@
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, division
+
+import os
 
 import urwid
 import urwid.util
-import os
 
-import netlib.utils
-
-from .. import utils
-from .. import flow_export
-from ..models import decoded
-from . import signals
-
+import netlib
+from mitmproxy import flow
+from mitmproxy import models
+from mitmproxy import utils
+from mitmproxy.console import signals
+from netlib import human
 
 try:
     import pyperclip
@@ -136,7 +136,7 @@ def raw_format_flow(f, focus, extended):
     if extended:
         req.append(
             fcol(
-                utils.format_timestamp(f["req_timestamp"]),
+                human.format_timestamp(f["req_timestamp"]),
                 "highlight"
             )
         )
@@ -154,7 +154,7 @@ def raw_format_flow(f, focus, extended):
 
     if f["intercepted"] and not f["acked"]:
         uc = "intercept"
-    elif f["resp_code"] or f["err_msg"]:
+    elif "resp_code" in f or "err_msg" in f:
         uc = "text"
     else:
         uc = "title"
@@ -173,7 +173,7 @@ def raw_format_flow(f, focus, extended):
         ("fixed", preamble, urwid.Text(""))
     )
 
-    if f["resp_code"]:
+    if "resp_code" in f:
         codes = {
             2: "code_200",
             3: "code_300",
@@ -185,6 +185,8 @@ def raw_format_flow(f, focus, extended):
         if f["resp_is_replay"]:
             resp.append(fcol(SYMBOL_REPLAY, "replay"))
         resp.append(fcol(f["resp_code"], ccol))
+        if extended:
+            resp.append(fcol(f["resp_reason"], ccol))
         if f["intercepted"] and f["resp_code"] and not f["acked"]:
             rc = "intercept"
         else:
@@ -257,7 +259,7 @@ def copy_flow_format_data(part, scope, flow):
         if scope in ("q", "a"):
             if flow.request.content is None:
                 return None, "Request content is missing"
-            with decoded(flow.request):
+            with models.decoded(flow.request):
                 if part == "h":
                     data += netlib.http.http1.assemble_request(flow.request)
                 elif part == "c":
@@ -270,7 +272,7 @@ def copy_flow_format_data(part, scope, flow):
         if scope in ("s", "a") and flow.response:
             if flow.response.content is None:
                 return None, "Response content is missing"
-            with decoded(flow.response):
+            with models.decoded(flow.response):
                 if part == "h":
                     data += netlib.http.http1.assemble_response(flow.response)
                 elif part == "c":
@@ -280,16 +282,16 @@ def copy_flow_format_data(part, scope, flow):
     return data, False
 
 
-def export_prompt(k, flow):
+def export_prompt(k, f):
     exporters = {
-        "c": flow_export.curl_command,
-        "p": flow_export.python_code,
-        "r": flow_export.raw_request,
-        "l": flow_export.locust_code,
-        "t": flow_export.locust_task,
+        "c": flow.export.curl_command,
+        "p": flow.export.python_code,
+        "r": flow.export.raw_request,
+        "l": flow.export.locust_code,
+        "t": flow.export.locust_task,
     }
     if k in exporters:
-        copy_to_clipboard_or_prompt(exporters[k](flow))
+        copy_to_clipboard_or_prompt(exporters[k](f))
 
 
 def copy_to_clipboard_or_prompt(data):
@@ -412,13 +414,12 @@ def format_flow(f, focus, extended=False, hostheader=False, marked=False):
         req_http_version = f.request.http_version,
 
         err_msg = f.error.msg if f.error else None,
-        resp_code = f.response.status_code if f.response else None,
 
         marked = marked,
     )
     if f.response:
         if f.response.content:
-            contentdesc = netlib.utils.pretty_size(len(f.response.content))
+            contentdesc = human.pretty_size(len(f.response.content))
         elif f.response.content is None:
             contentdesc = "[content missing]"
         else:
@@ -426,10 +427,11 @@ def format_flow(f, focus, extended=False, hostheader=False, marked=False):
         duration = 0
         if f.response.timestamp_end and f.request.timestamp_start:
             duration = f.response.timestamp_end - f.request.timestamp_start
-        roundtrip = utils.pretty_duration(duration)
+        roundtrip = human.pretty_duration(duration)
 
         d.update(dict(
             resp_code = f.response.status_code,
+            resp_reason = f.response.reason,
             resp_is_replay = f.response.is_replay,
             resp_clen = contentdesc,
             roundtrip = roundtrip,

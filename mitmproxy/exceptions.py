@@ -5,14 +5,14 @@ Every Exception mitmproxy raises shall be a subclass of ProxyException.
 
 See also: http://lucumr.pocoo.org/2014/10/16/on-error-handling/
 """
-from __future__ import (absolute_import, print_function, division)
-
-import traceback
+from __future__ import absolute_import, print_function, division
 
 import sys
+import traceback
 
 
 class ProxyException(Exception):
+
     """
     Base class for all exceptions thrown by mitmproxy.
     """
@@ -22,6 +22,7 @@ class ProxyException(Exception):
 
 
 class Kill(ProxyException):
+
     """
     Signal that both client and server connection(s) should be killed immediately.
     """
@@ -37,6 +38,7 @@ class TlsProtocolException(ProtocolException):
 
 
 class ClientHandshakeException(TlsProtocolException):
+
     def __init__(self, message, server):
         super(ClientHandshakeException, self).__init__(message)
         self.server = server
@@ -47,6 +49,10 @@ class Socks5ProtocolException(ProtocolException):
 
 
 class HttpProtocolException(ProtocolException):
+    pass
+
+
+class Http2ProtocolException(ProtocolException):
     pass
 
 
@@ -63,6 +69,7 @@ class ReplayException(ProxyException):
 
 
 class ScriptException(ProxyException):
+
     @classmethod
     def from_exception_context(cls, cut_tb=1):
         """
@@ -83,4 +90,8 @@ class ScriptException(ProxyException):
 
 
 class FlowReadException(ProxyException):
+    pass
+
+
+class ControlException(ProxyException):
     pass

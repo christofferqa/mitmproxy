@@ -2,21 +2,20 @@ from __future__ import absolute_import, print_function, division
 
 import email
 
-import six
 import time
 
 from netlib.http import Headers
-from netlib.odict import ODict, ODictCaseless
+from netlib.http.cookies import CookieAttrs
 from netlib.tutils import raises, tresp
 from .test_message import _test_passthrough_attr, _test_decoded_attr
 
 
 class TestResponseData(object):
     def test_init(self):
-        with raises(ValueError if six.PY2 else TypeError):
+        with raises(ValueError):
             tresp(headers="foobar")
 
-        assert isinstance(tresp(headers=None).headers, Headers)
+        assert isinstance(tresp(headers=()).headers, Headers)
 
 
 class TestResponseCore(object):
@@ -25,7 +24,7 @@ class TestResponseCore(object):
     """
     def test_repr(self):
         response = tresp()
-        assert repr(response) == "Response(200 OK, unknown content type, 7B)"
+        assert repr(response) == "Response(200 OK, unknown content type, 7b)"
         response.content = None
         assert repr(response) == "Response(200 OK, no content)"
 
@@ -56,21 +55,22 @@ class TestResponseUtils(object):
         result = resp.cookies
         assert len(result) == 1
         assert "cookiename" in result
-        assert result["cookiename"][0] == ["cookievalue", ODict()]
+        assert result["cookiename"] == ("cookievalue", CookieAttrs())
 
     def test_get_cookies_with_parameters(self):
         resp = tresp()
-        resp.headers = Headers(set_cookie="cookiename=cookievalue;domain=example.com;expires=Wed Oct  21 16:29:41 2015;path=/; HttpOnly")
+        cookie = "cookiename=cookievalue;domain=example.com;expires=Wed Oct  21 16:29:41 2015;path=/; HttpOnly"
+        resp.headers = Headers(set_cookie=cookie)
         result = resp.cookies
         assert len(result) == 1
         assert "cookiename" in result
-        assert result["cookiename"][0][0] == "cookievalue"
-        attrs = result["cookiename"][0][1]
+        assert result["cookiename"][0] == "cookievalue"
+        attrs = result["cookiename"][1]
         assert len(attrs) == 4
-        assert attrs["domain"] == ["example.com"]
-        assert attrs["expires"] == ["Wed Oct  21 16:29:41 2015"]
-        assert attrs["path"] == ["/"]
-        assert attrs["httponly"] == [None]
+        assert attrs["domain"] == "example.com"
+        assert attrs["expires"] == "Wed Oct  21 16:29:41 2015"
+        assert attrs["path"] == "/"
+        assert attrs["httponly"] is None
 
     def test_get_cookies_no_value(self):
         resp = tresp()
@@ -78,8 +78,8 @@ class TestResponseUtils(object):
         result = resp.cookies
         assert len(result) == 1
         assert "cookiename" in result
-        assert result["cookiename"][0][0] == ""
-        assert len(result["cookiename"][0][1]) == 2
+        assert result["cookiename"][0] == ""
+        assert len(result["cookiename"][1]) == 2
 
     def test_get_cookies_twocookies(self):
         resp = tresp()
@@ -90,19 +90,16 @@ class TestResponseUtils(object):
         result = resp.cookies
         assert len(result) == 2
         assert "cookiename" in result
-        assert result["cookiename"][0] == ["cookievalue", ODict()]
+        assert result["cookiename"] == ("cookievalue", CookieAttrs())
         assert "othercookie" in result
-        assert result["othercookie"][0] == ["othervalue", ODict()]
+        assert result["othercookie"] == ("othervalue", CookieAttrs())
 
     def test_set_cookies(self):
         resp = tresp()
-        v = resp.cookies
-        v.add("foo", ["bar", ODictCaseless()])
-        resp.cookies = v
+        resp.cookies["foo"] = ("bar", {})
 
-        v = resp.cookies
-        assert len(v) == 1
-        assert v["foo"] == [["bar", ODictCaseless()]]
+        assert len(resp.cookies) == 1
+        assert resp.cookies["foo"] == ("bar", CookieAttrs())
 
     def test_refresh(self):
         r = tresp()

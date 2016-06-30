@@ -1,16 +1,18 @@
-from __future__ import absolute_import
+from __future__ import absolute_import, print_function, division
 
 import copy
-import re
 import os
+import re
+
 import urwid
 
-from netlib import odict
-from netlib.http import user_agents, cookies
-
-from . import common, signals
-from .. import utils, filt, script
-
+from mitmproxy import filt
+from mitmproxy import script
+from mitmproxy import utils
+from mitmproxy.console import common
+from mitmproxy.console import signals
+from netlib.http import cookies
+from netlib.http import user_agents
 
 FOOTER = [
     ('heading_key', "enter"), ":edit ",
@@ -700,17 +702,17 @@ class SetCookieEditor(GridEditor):
 
     def data_in(self, data):
         flattened = []
-        for k, v in data.items():
-            flattened.append([k, v[0], v[1].lst])
+        for key, (value, attrs) in data:
+            flattened.append([key, value, attrs.items(multi=True)])
         return flattened
 
     def data_out(self, data):
         vals = []
-        for i in data:
+        for key, value, attrs in data:
             vals.append(
                 [
-                    i[0],
-                    [i[1], odict.ODictCaseless(i[2])]
+                    key,
+                    (value, attrs)
                 ]
             )
-        return odict.ODict(vals)
+        return vals

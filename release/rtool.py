@@ -17,6 +17,8 @@ import fnmatch
 
 # https://virtualenv.pypa.io/en/latest/userguide.html#windows-notes
 # scripts and executables on Windows go in ENV\Scripts\ instead of ENV/bin/
+import sys
+
 if platform.system() == "Windows":
     VENV_BIN = "Scripts"
 else:
@@ -53,7 +55,7 @@ project = {
         "pathod": ["pathoc", "pathod"]
     },
     "dir": ROOT_DIR,
-    "python_version": "py2"
+    "python_version": "py2.py3",
 }
 if platform.system() == "Windows":
     project["tools"].remove("mitmproxy")
@@ -182,7 +184,7 @@ def wheels():
         subprocess.check_call(
             [
                 "python", "./setup.py", "-q",
-                "bdist_wheel", "--dist-dir", DIST_DIR,
+                "bdist_wheel", "--dist-dir", DIST_DIR, "--universal"
             ],
             cwd=project["dir"]
         )
@@ -194,6 +196,9 @@ def wheels():
 
         with chdir(DIST_DIR):
             print("Installing %s..." % project["name"])
+            # lxml...
+            if platform.system() == "Windows" and sys.version_info[0] == 3:
+                subprocess.check_call([VENV_PIP, "install", "-q", "https://snapshots.mitmproxy.org/misc/lxml-3.6.0-cp35-cp35m-win32.whl"])
             subprocess.check_call([VENV_PIP, "install", "-q", wheel_name()])
 
             print("Running binaries...")

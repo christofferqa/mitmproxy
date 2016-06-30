@@ -1,26 +1,26 @@
+"""
+Colleciton of utility functions that implement small portions of the RFC6455
+WebSockets Protocol Useful for building WebSocket clients and servers.
 
+Emphassis is on readabilty, simplicity and modularity, not performance or
+completeness
 
+This is a work in progress and does not yet contain all the utilites need to
+create fully complient client/servers #
+Spec: https://tools.ietf.org/html/rfc6455
 
-# Colleciton of utility functions that implement small portions of the RFC6455
-# WebSockets Protocol Useful for building WebSocket clients and servers.
-#
-# Emphassis is on readabilty, simplicity and modularity, not performance or
-# completeness
-#
-# This is a work in progress and does not yet contain all the utilites need to
-# create fully complient client/servers #
-# Spec: https://tools.ietf.org/html/rfc6455
+The magic sha that websocket servers must know to prove they understand
+RFC6455
+"""
 
-# The magic sha that websocket servers must know to prove they understand
-# RFC6455
 from __future__ import absolute_import
 import base64
 import hashlib
 import os
 
-import binascii
 import six
-from ..http import Headers
+
+from netlib import http, strutils
 
 websockets_magic = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 VERSION = "13"
@@ -73,11 +73,11 @@ class WebsocketsProtocol(object):
             specified, it is generated, and can be found in sec-websocket-key in
             the returned header set.
 
-            Returns an instance of Headers
+            Returns an instance of http.Headers
         """
         if not key:
             key = base64.b64encode(os.urandom(16)).decode('ascii')
-        return Headers(
+        return http.Headers(
             sec_websocket_key=key,
             sec_websocket_version=version,
             connection="Upgrade",
@@ -89,12 +89,11 @@ class WebsocketsProtocol(object):
         """
           The server response is a valid HTTP 101 response.
         """
-        return Headers(
+        return http.Headers(
             sec_websocket_accept=self.create_server_nonce(key),
             connection="Upgrade",
             upgrade="websocket"
         )
-
 
     @classmethod
     def check_client_handshake(self, headers):
@@ -102,14 +101,12 @@ class WebsocketsProtocol(object):
             return
         return headers.get("sec-websocket-key")
 
-
     @classmethod
     def check_server_handshake(self, headers):
         if headers.get("upgrade") != "websocket":
             return
         return headers.get("sec-websocket-accept")
 
-
     @classmethod
     def create_server_nonce(self, client_nonce):
-        return base64.b64encode(hashlib.sha1(client_nonce + websockets_magic).digest())
+        return base64.b64encode(hashlib.sha1(strutils.always_bytes(client_nonce) + websockets_magic).digest())

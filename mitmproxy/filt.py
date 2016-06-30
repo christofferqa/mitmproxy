@@ -31,13 +31,16 @@
         ~c CODE     Response code.
         rex         Equivalent to ~u rex
 """
-from __future__ import absolute_import, print_function
+from __future__ import absolute_import, print_function, division
+
 import re
 import sys
+
 import pyparsing as pp
 
 
 class _Token(object):
+
     def dump(self, indent=0, fp=sys.stdout):
         print("{spacing}{name}{expr}".format(
             spacing="\t" * indent,

@@ -3,8 +3,13 @@ import os
 import abc
 import pyparsing as pp
 
-from .. import utils
+import six
+from six.moves import reduce
+from netlib import strutils
+from netlib import human
+
 from . import generators, exceptions
+
 
 class Settings(object):
 
@@ -105,7 +110,7 @@ class Token(object):
 class _TokValueLiteral(Token):
 
     def __init__(self, val):
-        self.val = val.decode("string_escape")
+        self.val = strutils.escaped_str_to_bytes(val)
 
     def get_generator(self, settings_):
         return self.val
@@ -130,7 +135,7 @@ class TokValueLiteral(_TokValueLiteral):
         return v
 
     def spec(self):
-        inner = self.val.encode("string_escape")
+        inner = strutils.bytes_to_escaped_str(self.val)
         inner = inner.replace(r"\'", r"\x27")
         return "'" + inner + "'"
 
@@ -143,7 +148,7 @@ class TokValueNakedLiteral(_TokValueLiteral):
         return e.setParseAction(lambda x: cls(*x))
 
     def spec(self):
-        return self.val.encode("string_escape")
+        return strutils.bytes_to_escaped_str(self.val)
 
 
 class TokValueGenerate(Token):
@@ -154,14 +159,14 @@ class TokValueGenerate(Token):
         self.usize, self.unit, self.datatype = usize, unit, datatype
 
     def bytes(self):
-        return self.usize * utils.SIZE_UNITS[self.unit]
+        return self.usize * human.SIZE_UNITS[self.unit]
 
     def get_generator(self, settings_):
         return generators.RandomGenerator(self.datatype, self.bytes())
 
     def freeze(self, settings):
         g = self.get_generator(settings)
-        return TokValueLiteral(g[:].encode("string_escape"))
+        return TokValueLiteral(strutils.bytes_to_escaped_str(g[:]))
 
     @classmethod
     def expr(cls):
@@ -169,7 +174,7 @@ class TokValueGenerate(Token):
 
         u = reduce(
             operator.or_,
-            [pp.Literal(i) for i in utils.SIZE_UNITS.keys()]
+            [pp.Literal(i) for i in human.SIZE_UNITS.keys()]
         ).leaveWhitespace()
         e = e + pp.Optional(u, default=None)
 
@@ -221,7 +226,7 @@ class TokValueFile(Token):
         return generators.FileGenerator(s)
 
     def spec(self):
-        return "<'%s'" % self.path.encode("string_escape")
+        return "<'%s'" % self.path
 
 
 TokValue = pp.MatchFirst(
@@ -256,7 +261,7 @@ class _Component(Token):
 
     """
         A value component of the primary specification of an message.
-        Components produce byte values desribe the bytes of the message.
+        Components produce byte values describing the bytes of the message.
     """
 
     def values(self, settings):  # pragma: no cover
@@ -267,9 +272,9 @@ class _Component(Token):
 
     def string(self, settings=None):
         """
-            A string representation of the object.
+            A bytestring representation of the object.
         """
-        return "".join(i[:] for i in self.values(settings or {}))
+        return b"".join(i[:] for i in self.values(settings or {}))
 
 
 class KeyValue(_Component):
@@ -337,7 +342,7 @@ class OptionsOrValue(_Component):
         # it to be canonical. The user can specify a different case by using a
         # string value literal.
         self.option_used = False
-        if isinstance(value, basestring):
+        if isinstance(value, six.string_types):
             for i in self.options:
                 # Find the exact option value in a case-insensitive way
                 if i.lower() == value.lower():
@@ -386,7 +391,7 @@ class Integer(_Component):
                 "Integer value must be between %s and %s." % self.bounds,
                 0, 0
             )
-        self.value = str(value)
+        self.value = str(value).encode()
 
     @classmethod
     def expr(cls):
@@ -396,10 +401,10 @@ class Integer(_Component):
         return e.setParseAction(lambda x: cls(*x))
 
     def values(self, settings):
-        return self.value
+        return [self.value]
 
     def spec(self):
-        return "%s%s" % (self.preamble, self.value)
+        return "%s%s" % (self.preamble, self.value.decode())
 
     def freeze(self, settings_):
         return self
@@ -550,7 +555,7 @@ class NestedMessage(Token):
         try:
             self.parsed = self.nest_type(
                 self.nest_type.expr().parseString(
-                    value.val,
+                    value.val.decode(),
                     parseAll=True
                 )
             )
@@ -573,4 +578,4 @@ class NestedMessage(Token):
 
     def freeze(self, settings):
         f = self.parsed.freeze(settings).spec()
-        return self.__class__(TokValueLiteral(f.encode("string_escape")))
+        return self.__class__(TokValueLiteral(strutils.bytes_to_escaped_str(f.encode())))

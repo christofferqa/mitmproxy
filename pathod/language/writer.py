@@ -1,6 +1,5 @@
 import time
 from netlib.exceptions import TcpDisconnect
-import netlib.tcp
 
 BLOCKSIZE = 1024
 # It's not clear what the upper limit for time.sleep is. It's lower than the
@@ -23,8 +22,8 @@ def write_values(fp, vals, actions, sofar=0, blocksize=BLOCKSIZE):
     """
         vals: A list of values, which may be strings or Value objects.
 
-        actions: A list of (offset, action, arg) tuples. Action may be "pause"
-        or "disconnect".
+        actions: A list of (offset, action, arg) tuples. Action may be "inject",
+        "pause" or "disconnect".
 
         Both vals and actions are in reverse order, with the first items last.
 

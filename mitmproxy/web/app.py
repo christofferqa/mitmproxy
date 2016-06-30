@@ -1,14 +1,18 @@
+from __future__ import absolute_import, print_function, division
+
+import base64
+import json
+import logging
 import os.path
 import re
 
 import six
-import tornado.web
 import tornado.websocket
-import logging
-import json
-import base64
+from io import BytesIO
+from mitmproxy.flow import FlowWriter, FlowReader
 
-from .. import version, filt
+from mitmproxy import filt
+from netlib import version
 
 
 def _strip_content(flow_state):
@@ -68,7 +72,7 @@ class RequestHandler(BasicAuth, tornado.web.RequestHandler):
 
     def set_default_headers(self):
         super(RequestHandler, self).set_default_headers()
-        self.set_header("Server", version.NAMEVERSION)
+        self.set_header("Server", version.MITMPROXY)
         self.set_header("X-Frame-Options", "DENY")
         self.add_header("X-XSS-Protection", "1; mode=block")
         self.add_header("X-Content-Type-Options", "nosniff")
@@ -112,7 +116,8 @@ class RequestHandler(BasicAuth, tornado.web.RequestHandler):
 class IndexHandler(RequestHandler):
 
     def get(self):
-        _ = self.xsrf_token  # https://github.com/tornadoweb/tornado/issues/645
+        token = self.xsrf_token  # https://github.com/tornadoweb/tornado/issues/645
+        assert token
         self.render("index.html")
 
 
@@ -155,6 +160,28 @@ class Flows(RequestHandler):
         self.write(dict(
             data=[_strip_content(f.get_state()) for f in self.state.flows]
         ))
+
+
+class DumpFlows(RequestHandler):
+    def get(self):
+        self.set_header("Content-Disposition", "attachment; filename=flows")
+        self.set_header("Content-Type", "application/octet-stream")
+
+        bio = BytesIO()
+        fw = FlowWriter(bio)
+        for f in self.state.flows:
+            fw.add(f)
+
+        self.write(bio.getvalue())
+        bio.close()
+
+    def post(self):
+        self.state.clear()
+
+        content = self.request.files.values()[0][0]["body"]
+        bio = BytesIO(content)
+        self.state.load_flows(FlowReader(bio).stream())
+        bio.close()
 
 
 class ClearAll(RequestHandler):
@@ -282,11 +309,21 @@ class Events(RequestHandler):
 class Settings(RequestHandler):
 
     def get(self):
+
         self.write(dict(
             data=dict(
                 version=version.VERSION,
                 mode=str(self.master.server.config.mode),
-                intercept=self.state.intercept_txt
+                intercept=self.state.intercept_txt,
+                showhost=self.master.options.showhost,
+                no_upstream_cert=self.master.server.config.no_upstream_cert,
+                rawtcp=self.master.server.config.rawtcp,
+                http2=self.master.server.config.http2,
+                anticache=self.master.options.anticache,
+                anticomp=self.master.options.anticomp,
+                stickyauth=self.master.stickyauth_txt,
+                stickycookie=self.master.stickycookie_txt,
+                stream= self.master.stream_large_bodies.max_size if self.master.stream_large_bodies else False
             )
         ))
 
@@ -296,11 +333,38 @@ class Settings(RequestHandler):
             if k == "intercept":
                 self.state.set_intercept(v)
                 update[k] = v
+            elif k == "showhost":
+                self.master.options.showhost = v
+                update[k] = v
+            elif k == "no_upstream_cert":
+                self.master.server.config.no_upstream_cert = v
+                update[k] = v
+            elif k == "rawtcp":
+                self.master.server.config.rawtcp = v
+                update[k] = v
+            elif k == "http2":
+                self.master.server.config.http2 = v
+                update[k] = v
+            elif k == "anticache":
+                self.master.options.anticache = v
+                update[k] = v
+            elif k == "anticomp":
+                self.master.options.anticomp = v
+                update[k] = v
+            elif k == "stickycookie":
+                self.master.set_stickycookie(v)
+                update[k] = v
+            elif k == "stickyauth":
+                self.master.set_stickyauth(v)
+                update[k] = v
+            elif k == "stream":
+                self.master.set_stream_large_bodies(v)
+                update[k] = v
             else:
                 print("Warning: Unknown setting {}: {}".format(k, v))
 
         ClientConnection.broadcast(
-            type="settings",
+            type="UPDATE_SETTINGS",
             cmd="update",
             data=update
         )
@@ -316,6 +380,7 @@ class Application(tornado.web.Application):
             (r"/updates", ClientConnection),
             (r"/events", Events),
             (r"/flows", Flows),
+            (r"/flows/dump", DumpFlows),
             (r"/flows/accept", AcceptFlows),
             (r"/flows/(?P<flow_id>[0-9a-f\-]+)", FlowHandler),
             (r"/flows/(?P<flow_id>[0-9a-f\-]+)/accept", AcceptFlow),

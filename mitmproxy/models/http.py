@@ -1,11 +1,15 @@
-from __future__ import (absolute_import, print_function, division)
+from __future__ import absolute_import, print_function, division
+
 import cgi
 
+from mitmproxy.models.flow import Flow
 from netlib import encoding
-from netlib.http import status_codes, Headers, Request, Response
+from netlib import version
+from netlib.http import Headers
+from netlib.http import Request
+from netlib.http import Response
+from netlib.http import status_codes
 from netlib.tcp import Address
-from .. import version
-from .flow import Flow
 
 
 class MessageMixin(object):
@@ -72,9 +76,9 @@ class HTTPRequest(MessageMixin, Request):
     def get_state(self):
         state = super(HTTPRequest, self).get_state()
         state.update(
-            stickycookie = self.stickycookie,
-            stickyauth = self.stickyauth,
-            is_replay = self.is_replay,
+            stickycookie=self.stickycookie,
+            stickyauth=self.stickyauth,
+            is_replay=self.is_replay,
         )
         return state
 
@@ -109,6 +113,7 @@ class HTTPRequest(MessageMixin, Request):
 
 
 class HTTPResponse(MessageMixin, Response):
+
     """
     A mitmproxy HTTP response.
     This is a very thin wrapper on top of :py:class:`netlib.http.Response` and
@@ -124,7 +129,7 @@ class HTTPResponse(MessageMixin, Response):
             content,
             timestamp_start=None,
             timestamp_end=None,
-            is_replay = False
+            is_replay=False
     ):
         Response.__init__(
             self,
@@ -191,12 +196,6 @@ class HTTPFlow(Flow):
         response=HTTPResponse
     )
 
-    @classmethod
-    def from_state(cls, state):
-        f = cls(None, None)
-        f.set_state(state)
-        return f
-
     def __repr__(self):
         s = "<HTTPFlow"
         for a in ("request", "response", "error", "client_conn", "server_conn"):
@@ -259,7 +258,7 @@ def make_error_response(status_code, message, headers=None):
 
     if not headers:
         headers = Headers(
-            Server=version.NAMEVERSION,
+            Server=version.MITMPROXY,
             Connection="close",
             Content_Length=str(len(body)),
             Content_Type="text/html"

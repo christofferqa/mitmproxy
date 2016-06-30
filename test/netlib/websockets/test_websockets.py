@@ -2,12 +2,15 @@ import os
 
 from netlib.http.http1 import read_response, read_request
 
-from netlib import tcp, websockets, http, tutils
+from netlib import tcp
+from netlib import tutils
+from netlib import websockets
 from netlib.http import status_codes
 from netlib.tutils import treq
-from netlib.exceptions import *
+from netlib import exceptions
 
 from .. import tservers
+
 
 class WebSocketsEchoHandler(tcp.BaseHandler):
 
@@ -117,8 +120,8 @@ class TestWebSockets(tservers.ServerTestBase):
           default builder should always generate valid frames
         """
         msg = self.random_bytes()
-        client_frame = websockets.Frame.default(msg, from_client=True)
-        server_frame = websockets.Frame.default(msg, from_client=False)
+        assert websockets.Frame.default(msg, from_client=True)
+        assert websockets.Frame.default(msg, from_client=False)
 
     def test_serialization_bijection(self):
         """
@@ -174,7 +177,7 @@ class TestBadHandshake(tservers.ServerTestBase):
     handler = BadHandshakeHandler
 
     def test(self):
-        with tutils.raises(TcpDisconnect):
+        with tutils.raises(exceptions.TcpDisconnect):
             client = WebSocketsClient(("127.0.0.1", self.port))
             client.connect()
             client.send_message(b"hello")

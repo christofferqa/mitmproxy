@@ -24,6 +24,7 @@ from __future__ import (absolute_import, print_function, division)
 import collections
 import random
 
+import sys
 from enum import Enum
 
 from mitmproxy.exceptions import TlsProtocolException
@@ -40,6 +41,7 @@ class _TlsStrategy(object):
     """
     Abstract base class for interception strategies.
     """
+
     def __init__(self):
         # A server_address -> interception results mapping
         self.history = collections.defaultdict(lambda: collections.deque(maxlen=200))
@@ -78,6 +80,7 @@ class ProbabilisticStrategy(_TlsStrategy):
     """
     Fixed probability that we intercept a given connection.
     """
+
     def __init__(self, p):
         self.p = p
         super(ProbabilisticStrategy, self).__init__()
@@ -108,9 +111,9 @@ class TlsFeedback(TlsLayer):
 # inline script hooks below.
 
 
-def start(context, argv):
-    if len(argv) == 2:
-        context.tls_strategy = ProbabilisticStrategy(float(argv[1]))
+def start(context):
+    if len(sys.argv) == 2:
+        context.tls_strategy = ProbabilisticStrategy(float(sys.argv[1]))
     else:
         context.tls_strategy = ConservativeStrategy()
 
@@ -132,5 +135,5 @@ def next_layer(context, next_layer):
             # We don't intercept - reply with a pass-through layer and add a "skipped" entry.
             context.log("TLS passthrough for %s" % repr(next_layer.server_conn.address), "info")
             next_layer_replacement = RawTCPLayer(next_layer.ctx, logging=False)
-            next_layer.reply(next_layer_replacement)
+            next_layer.reply.send(next_layer_replacement)
             context.tls_strategy.record_skipped(server_address)

@@ -58,7 +58,24 @@ Datastructures
 
     .. autoclass:: decoded
 
-.. automodule:: mitmproxy.models
+.. automodule:: netlib.multidict
+
+    .. autoclass:: MultiDictView
+
+        .. automethod:: get_all
+        .. automethod:: set_all
+        .. automethod:: add
+        .. automethod:: insert
+        .. automethod:: keys
+        .. automethod:: values
+        .. automethod:: items
+        .. automethod:: to_dict
+
+.. autoclass:: mitmproxy.models.Error
     :show-inheritance:
-    :noindex:
-    :members: Error, ServerConnection, ClientConnection
+
+.. autoclass:: mitmproxy.models.ServerConnection
+    :show-inheritance:
+
+.. autoclass:: mitmproxy.models.ClientConnection
+    :show-inheritance:

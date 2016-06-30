@@ -1,18 +1,19 @@
-from __future__ import (absolute_import, print_function, division)
-import threading
-import traceback
-from mitmproxy.exceptions import ReplayException
-from netlib.exceptions import HttpException, TcpException
-from netlib.http import http1
+from __future__ import absolute_import, print_function, division
 
-from ..controller import Channel
-from ..models import Error, HTTPResponse, ServerConnection, make_connect_request
-from ..exceptions import Kill
+import traceback
+
+import netlib.exceptions
+from mitmproxy import controller
+from mitmproxy import exceptions
+from mitmproxy import models
+from netlib.http import http1
+from netlib import basethread
+
 
 # TODO: Doesn't really belong into mitmproxy.protocol...
 
 
-class RequestReplayThread(threading.Thread):
+class RequestReplayThread(basethread.BaseThread):
     name = "RequestReplayThread"
 
     def __init__(self, config, flow, event_queue, should_exit):
@@ -22,10 +23,12 @@ class RequestReplayThread(threading.Thread):
         """
         self.config, self.flow = config, flow
         if event_queue:
-            self.channel = Channel(event_queue, should_exit)
+            self.channel = controller.Channel(event_queue, should_exit)
         else:
             self.channel = None
-        super(RequestReplayThread, self).__init__()
+        super(RequestReplayThread, self).__init__(
+            "RequestReplay (%s)" % flow.request.url
+        )
 
     def run(self):
         r = self.flow.request
@@ -36,17 +39,17 @@ class RequestReplayThread(threading.Thread):
             # If we have a channel, run script hooks.
             if self.channel:
                 request_reply = self.channel.ask("request", self.flow)
-                if isinstance(request_reply, HTTPResponse):
+                if isinstance(request_reply, models.HTTPResponse):
                     self.flow.response = request_reply
 
             if not self.flow.response:
                 # In all modes, we directly connect to the server displayed
                 if self.config.mode == "upstream":
                     server_address = self.config.upstream_server.address
-                    server = ServerConnection(server_address, (self.config.host, 0))
+                    server = models.ServerConnection(server_address, (self.config.host, 0))
                     server.connect()
                     if r.scheme == "https":
-                        connect_request = make_connect_request((r.host, r.port))
+                        connect_request = models.make_connect_request((r.host, r.port))
                         server.wfile.write(http1.assemble_request(connect_request))
                         server.wfile.flush()
                         resp = http1.read_response(
@@ -55,17 +58,17 @@ class RequestReplayThread(threading.Thread):
                             body_size_limit=self.config.body_size_limit
                         )
                         if resp.status_code != 200:
-                            raise ReplayException("Upstream server refuses CONNECT request")
+                            raise exceptions.ReplayException("Upstream server refuses CONNECT request")
                         server.establish_ssl(
                             self.config.clientcerts,
                             sni=self.flow.server_conn.sni
                         )
                         r.first_line_format = "relative"
                     else:
-                        r.first_line_format= "absolute"
+                        r.first_line_format = "absolute"
                 else:
                     server_address = (r.host, r.port)
-                    server = ServerConnection(server_address, (self.config.host, 0))
+                    server = models.ServerConnection(server_address, (self.config.host, 0))
                     server.connect()
                     if r.scheme == "https":
                         server.establish_ssl(
@@ -77,20 +80,20 @@ class RequestReplayThread(threading.Thread):
                 server.wfile.write(http1.assemble_request(r))
                 server.wfile.flush()
                 self.flow.server_conn = server
-                self.flow.response = HTTPResponse.wrap(http1.read_response(
+                self.flow.response = models.HTTPResponse.wrap(http1.read_response(
                     server.rfile,
                     r,
                     body_size_limit=self.config.body_size_limit
                 ))
             if self.channel:
                 response_reply = self.channel.ask("response", self.flow)
-                if response_reply == Kill:
-                    raise Kill()
-        except (ReplayException, HttpException, TcpException) as e:
-            self.flow.error = Error(str(e))
+                if response_reply == exceptions.Kill:
+                    raise exceptions.Kill()
+        except (exceptions.ReplayException, netlib.exceptions.NetlibException) as e:
+            self.flow.error = models.Error(str(e))
             if self.channel:
                 self.channel.ask("error", self.flow)
-        except Kill:
+        except exceptions.Kill:
             # Kill should only be raised if there's a channel in the
             # first place.
             from ..proxy.root_context import Log

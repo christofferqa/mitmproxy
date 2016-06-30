@@ -1,7 +1,12 @@
 import logging
 import requests
 from pathod import test
-import tutils
+
+from . import tutils
+
+import requests.packages.urllib3
+
+requests.packages.urllib3.disable_warnings()
 logging.disable(logging.CRITICAL)
 
 

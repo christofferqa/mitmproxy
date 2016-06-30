@@ -1,36 +1,29 @@
-from __future__ import (absolute_import, print_function, division)
+from __future__ import absolute_import, print_function, division
+
 import socket
-import six
-import sys
 
 from OpenSSL import SSL
-from netlib.exceptions import TcpException
 
-from netlib.tcp import ssl_read_select
-from netlib.utils import clean_bin
-from ..exceptions import ProtocolException
-from .base import Layer
-
-
-class TcpMessage(object):
-
-    def __init__(self, client_conn, server_conn, sender, receiver, message):
-        self.client_conn = client_conn
-        self.server_conn = server_conn
-        self.sender = sender
-        self.receiver = receiver
-        self.message = message
+import netlib.exceptions
+import netlib.tcp
+from mitmproxy import models
+from mitmproxy.models import tcp
+from mitmproxy.protocol import base
 
 
-class RawTCPLayer(Layer):
+class RawTCPLayer(base.Layer):
     chunk_size = 4096
 
-    def __init__(self, ctx, logging=True):
-        self.logging = logging
+    def __init__(self, ctx, ignore=False):
+        self.ignore = ignore
         super(RawTCPLayer, self).__init__(ctx)
 
     def __call__(self):
         self.connect()
+
+        if not self.ignore:
+            flow = models.TCPFlow(self.client_conn, self.server_conn, self)
+            self.channel.ask("tcp_open", flow)
 
         buf = memoryview(bytearray(self.chunk_size))
 
@@ -40,7 +33,7 @@ class RawTCPLayer(Layer):
 
         try:
             while not self.channel.should_exit.is_set():
-                r = ssl_read_select(conns, 10)
+                r = netlib.tcp.ssl_read_select(conns, 10)
                 for conn in r:
                     dst = server if conn == client else client
 
@@ -59,30 +52,16 @@ class RawTCPLayer(Layer):
                             return
                         continue
 
-                    tcp_message = TcpMessage(
-                        self.client_conn, self.server_conn,
-                        self.client_conn if dst == server else self.server_conn,
-                        self.server_conn if dst == server else self.client_conn,
-                        buf[:size].tobytes())
-                    self.channel.ask("tcp_message", tcp_message)
-                    dst.sendall(tcp_message.message)
+                    tcp_message = tcp.TCPMessage(dst == server, buf[:size].tobytes())
+                    if not self.ignore:
+                        flow.messages.append(tcp_message)
+                        self.channel.ask("tcp_message", flow)
+                    dst.sendall(tcp_message.content)
 
-                    if self.logging:
-                        # log messages are prepended with the client address,
-                        # hence the "weird" direction string.
-                        if dst == server:
-                            direction = "-> tcp -> {}".format(repr(self.server_conn.address))
-                        else:
-                            direction = "<- tcp <- {}".format(repr(self.server_conn.address))
-                        data = clean_bin(tcp_message.message)
-                        self.log(
-                            "{}\r\n{}".format(direction, data),
-                            "info"
-                        )
-
-        except (socket.error, TcpException, SSL.Error) as e:
-            six.reraise(
-                ProtocolException,
-                ProtocolException("TCP connection closed unexpectedly: {}".format(repr(e))),
-                sys.exc_info()[2]
-            )
+        except (socket.error, netlib.exceptions.TcpException, SSL.Error) as e:
+            if not self.ignore:
+                flow.error = models.Error("TCP connection closed unexpectedly: {}".format(repr(e)))
+                self.channel.tell("tcp_error", flow)
+        finally:
+            if not self.ignore:
+                self.channel.tell("tcp_close", flow)

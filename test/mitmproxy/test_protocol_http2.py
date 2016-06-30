@@ -2,14 +2,21 @@
 
 from __future__ import (absolute_import, print_function, division)
 
-import OpenSSL
 import pytest
 import traceback
 import os
 import tempfile
+import h2
 
 from mitmproxy.proxy.config import ProxyConfig
 from mitmproxy.cmdline import APP_HOST, APP_PORT
+
+import netlib
+from ..netlib import tservers as netlib_tservers
+from netlib.exceptions import HttpException
+from netlib.http.http2 import framereader
+
+from . import tservers
 
 import logging
 logging.getLogger("hyper.packages.hpack.hpack").setLevel(logging.WARNING)
@@ -19,13 +26,6 @@ logging.getLogger("passlib.registry").setLevel(logging.WARNING)
 logging.getLogger("PIL.Image").setLevel(logging.WARNING)
 logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 
-import netlib
-from ..netlib import tservers as netlib_tservers
-from netlib.utils import http2_read_raw_frame
-
-import h2
-
-from . import tservers
 
 requires_alpn = pytest.mark.skipif(
     not netlib.tcp.HAS_ALPN,
@@ -49,8 +49,11 @@ class _Http2ServerBase(netlib_tservers.ServerTestBase):
             done = False
             while not done:
                 try:
-                    raw = b''.join(http2_read_raw_frame(self.rfile))
+                    raw = b''.join(framereader.http2_read_raw_frame(self.rfile))
                     events = h2_conn.receive_data(raw)
+                except HttpException:
+                    print(traceback.format_exc())
+                    assert False
                 except:
                     break
                 self.wfile.write(h2_conn.data_to_send())
@@ -61,9 +64,7 @@ class _Http2ServerBase(netlib_tservers.ServerTestBase):
                         if not self.server.handle_server_event(event, h2_conn, self.rfile, self.wfile):
                             done = True
                             break
-                    except Exception as e:
-                        print(repr(e))
-                        print(traceback.format_exc())
+                    except:
                         done = True
                         break
 
@@ -165,12 +166,21 @@ class TestSimple(_Http2TestBase, _Http2ServerBase):
             assert ('client-foo', 'client-bar-1') in event.headers
             assert ('client-foo', 'client-bar-2') in event.headers
 
-            h2_conn.send_headers(event.stream_id, [
-                (':status', '200'),
-                ('server-foo', 'server-bar'),
-                ('föo', 'bär'),
-                ('X-Stream-ID', str(event.stream_id)),
-            ])
+            import warnings
+            with warnings.catch_warnings():
+                # Ignore UnicodeWarning:
+                # h2/utilities.py:64: UnicodeWarning: Unicode equal comparison
+                # failed to convert both arguments to Unicode - interpreting
+                # them as being unequal.
+                #     elif header[0] in (b'cookie', u'cookie') and len(header[1]) < 20:
+
+                warnings.simplefilter("ignore")
+                h2_conn.send_headers(event.stream_id, [
+                    (':status', '200'),
+                    ('server-foo', 'server-bar'),
+                    ('föo', 'bär'),
+                    ('X-Stream-ID', str(event.stream_id)),
+                ])
             h2_conn.send_data(event.stream_id, b'foobar')
             h2_conn.end_stream(event.stream_id)
             wfile.write(h2_conn.data_to_send())
@@ -192,9 +202,12 @@ class TestSimple(_Http2TestBase, _Http2ServerBase):
         done = False
         while not done:
             try:
-                events = h2_conn.receive_data(b''.join(http2_read_raw_frame(client.rfile)))
-            except:
-                break
+                raw = b''.join(framereader.http2_read_raw_frame(client.rfile))
+                events = h2_conn.receive_data(raw)
+            except HttpException:
+                print(traceback.format_exc())
+                assert False
+
             client.wfile.write(h2_conn.data_to_send())
             client.wfile.flush()
 
@@ -262,9 +275,12 @@ class TestWithBodies(_Http2TestBase, _Http2ServerBase):
         done = False
         while not done:
             try:
-                events = h2_conn.receive_data(b''.join(http2_read_raw_frame(client.rfile)))
-            except:
-                break
+                raw = b''.join(framereader.http2_read_raw_frame(client.rfile))
+                events = h2_conn.receive_data(raw)
+            except HttpException:
+                print(traceback.format_exc())
+                assert False
+
             client.wfile.write(h2_conn.data_to_send())
             client.wfile.flush()
 
@@ -354,8 +370,11 @@ class TestPushPromise(_Http2TestBase, _Http2ServerBase):
         responses = 0
         while not done:
             try:
-                raw = b''.join(http2_read_raw_frame(client.rfile))
+                raw = b''.join(framereader.http2_read_raw_frame(client.rfile))
                 events = h2_conn.receive_data(raw)
+            except HttpException:
+                print(traceback.format_exc())
+                assert False
             except:
                 break
             client.wfile.write(h2_conn.data_to_send())
@@ -404,9 +423,12 @@ class TestPushPromise(_Http2TestBase, _Http2ServerBase):
         responses = 0
         while not done:
             try:
-                events = h2_conn.receive_data(b''.join(http2_read_raw_frame(client.rfile)))
-            except:
-                break
+                raw = b''.join(framereader.http2_read_raw_frame(client.rfile))
+                events = h2_conn.receive_data(raw)
+            except HttpException:
+                print(traceback.format_exc())
+                assert False
+
             client.wfile.write(h2_conn.data_to_send())
             client.wfile.flush()
 
@@ -434,3 +456,55 @@ class TestPushPromise(_Http2TestBase, _Http2ServerBase):
         assert len(bodies) >= 1
         assert b'regular_stream' in bodies
         # the other two bodies might not be transmitted before the reset
+
+
+@requires_alpn
+class TestConnectionLost(_Http2TestBase, _Http2ServerBase):
+
+    @classmethod
+    def setup_class(self):
+        _Http2TestBase.setup_class()
+        _Http2ServerBase.setup_class()
+
+    @classmethod
+    def teardown_class(self):
+        _Http2TestBase.teardown_class()
+        _Http2ServerBase.teardown_class()
+
+    @classmethod
+    def handle_server_event(self, event, h2_conn, rfile, wfile):
+        if isinstance(event, h2.events.RequestReceived):
+            h2_conn.send_headers(1, [(':status', '200')])
+            wfile.write(h2_conn.data_to_send())
+            wfile.flush()
+            return False
+
+    def test_connection_lost(self):
+        client, h2_conn = self._setup_connection()
+
+        self._send_request(client.wfile, h2_conn, stream_id=1, headers=[
+            (':authority', "127.0.0.1:%s" % self.server.server.address.port),
+            (':method', 'GET'),
+            (':scheme', 'https'),
+            (':path', '/'),
+            ('foo', 'bar')
+        ])
+
+        done = False
+        while not done:
+            try:
+                raw = b''.join(framereader.http2_read_raw_frame(client.rfile))
+                h2_conn.receive_data(raw)
+            except HttpException:
+                print(traceback.format_exc())
+                assert False
+            except:
+                break
+            try:
+                client.wfile.write(h2_conn.data_to_send())
+                client.wfile.flush()
+            except:
+                break
+
+        if len(self.master.state.flows) == 1:
+            assert self.master.state.flows[0].response is None

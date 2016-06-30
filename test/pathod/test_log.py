@@ -1,10 +1,10 @@
-import StringIO
 from pathod import log
 from netlib.exceptions import TcpDisconnect
-import netlib.tcp
+
+import six
 
 
-class DummyIO(StringIO.StringIO):
+class DummyIO(six.StringIO):
 
     def start_log(self, *args, **kwargs):
         pass
@@ -16,7 +16,7 @@ class DummyIO(StringIO.StringIO):
 def test_disconnect():
     outf = DummyIO()
     rw = DummyIO()
-    l = log.ConnectionLogger(outf, False, rw, rw)
+    l = log.ConnectionLogger(outf, False, True, rw, rw)
     try:
         with l.ctx() as lg:
             lg("Test")

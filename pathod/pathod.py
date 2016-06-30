@@ -4,20 +4,20 @@ import logging
 import os
 import sys
 import threading
-import urllib
 
-from netlib import tcp, http, certutils, websockets
+from netlib import tcp
+from netlib import certutils
+from netlib import websockets
+from netlib import version
+
+from six.moves import urllib
 from netlib.exceptions import HttpException, HttpReadDisconnect, TcpTimeout, TcpDisconnect, \
     TlsException
 
-from . import version, app, language, utils, log, protocols
-import language.http
-import language.actions
-import language.exceptions
-import language.websockets
+from . import language, utils, log, protocols
 
 
-DEFAULT_CERT_DOMAIN = "pathod.net"
+DEFAULT_CERT_DOMAIN = b"pathod.net"
 CONFDIR = "~/.mitmproxy"
 CERTSTORE_BASENAME = "mitmproxy"
 CA_CERT_NAME = "mitmproxy-ca.pem"
@@ -116,7 +116,6 @@ class PathodHandler(tcp.BaseHandler):
             return None, response_log
         return self.handle_http_request, response_log
 
-
     def handle_http_request(self, logger):
         """
             Returns a (handler, log) tuple.
@@ -141,7 +140,6 @@ class PathodHandler(tcp.BaseHandler):
             path = req.path
             http_version = req.http_version
             headers = req.headers
-            body = req.content
 
             clientcert = None
             if self.clientcert:
@@ -188,7 +186,7 @@ class PathodHandler(tcp.BaseHandler):
                     break
             else:
                 if m(path.startswith(self.server.craftanchor)):
-                    spec = urllib.unquote(path)[len(self.server.craftanchor):]
+                    spec = urllib.parse.unquote(path)[len(self.server.craftanchor):]
                     if spec:
                         try:
                             anchor_gen = language.parse_pathod(spec, self.use_http2)
@@ -208,24 +206,27 @@ class PathodHandler(tcp.BaseHandler):
                             self.server.craftanchor
                         )])
 
-            if anchor_gen:
-                spec = anchor_gen.next()
+            if not anchor_gen:
+                anchor_gen = iter([self.make_http_error_response(
+                    "Not found",
+                    "No valid craft request found"
+                )])
 
-                if self.use_http2 and isinstance(spec, language.http2.Response):
-                    spec.stream_id = req.stream_id
+            spec = next(anchor_gen)
 
-                lg("crafting spec: %s" % spec)
-                nexthandler, retlog["response"] = self.http_serve_crafted(
-                    spec,
-                    lg
-                )
-                if nexthandler and websocket_key:
-                    self.protocol = protocols.websockets.WebsocketsProtocol(self)
-                    return self.protocol.handle_websocket, retlog
-                else:
-                    return nexthandler, retlog
+            if self.use_http2 and isinstance(spec, language.http2.Response):
+                spec.stream_id = req.stream_id
+
+            lg("crafting spec: %s" % spec)
+            nexthandler, retlog["response"] = self.http_serve_crafted(
+                spec,
+                lg
+            )
+            if nexthandler and websocket_key:
+                self.protocol = protocols.websockets.WebsocketsProtocol(self)
+                return self.protocol.handle_websocket, retlog
             else:
-                return self.protocol.handle_http_app(method, path, headers, body, lg)
+                return nexthandler, retlog
 
     def make_http_error_response(self, reason, body=None):
         resp = self.protocol.make_error_response(reason, body)
@@ -269,7 +270,7 @@ class PathodHandler(tcp.BaseHandler):
 
         lr = self.rfile if self.server.logreq else None
         lw = self.wfile if self.server.logresp else None
-        logger = log.ConnectionLogger(self.logfp, self.server.hexdump, lr, lw)
+        logger = log.ConnectionLogger(self.logfp, self.server.hexdump, True, lr, lw)
 
         self.settings.protocol = self.protocol
 
@@ -283,15 +284,10 @@ class PathodHandler(tcp.BaseHandler):
                 return
 
     def addlog(self, log):
-        # FIXME: The bytes in the log should not be escaped. We do this at the
-        # moment because JSON encoding can't handle binary data, and I don't
-        # want to base64 everything.
         if self.server.logreq:
-            encoded_bytes = self.rfile.get_log().encode("string_escape")
-            log["request_bytes"] = encoded_bytes
+            log["request_bytes"] = self.rfile.get_log()
         if self.server.logresp:
-            encoded_bytes = self.wfile.get_log().encode("string_escape")
-            log["response_bytes"] = encoded_bytes
+            log["response_bytes"] = self.wfile.get_log()
         self.server.add_log(log)
 
 
@@ -307,9 +303,7 @@ class Pathod(tcp.TCPServer):
         staticdir=None,
         anchors=(),
         sizelimit=None,
-        noweb=False,
         nocraft=False,
-        noapi=False,
         nohang=False,
         timeout=None,
         logreq=False,
@@ -331,7 +325,6 @@ class Pathod(tcp.TCPServer):
             None.
             sizelimit: Limit size of served data.
             nocraft: Disable response crafting.
-            noapi: Disable the API.
             nohang: Disable pauses.
         """
         tcp.TCPServer.__init__(self, addr)
@@ -340,16 +333,14 @@ class Pathod(tcp.TCPServer):
         self.staticdir = staticdir
         self.craftanchor = craftanchor
         self.sizelimit = sizelimit
-        self.noweb, self.nocraft = noweb, nocraft
-        self.noapi, self.nohang = noapi, nohang
+        self.nocraft = nocraft
+        self.nohang = nohang
         self.timeout, self.logreq = timeout, logreq
         self.logresp, self.hexdump = logresp, hexdump
         self.http2_framedump = http2_framedump
         self.explain = explain
         self.logfp = logfp
 
-        self.app = app.make_app(noapi, webdebug)
-        self.app.config["pathod"] = self
         self.log = []
         self.logid = 0
         self.anchors = anchors
@@ -357,6 +348,8 @@ class Pathod(tcp.TCPServer):
         self.settings = language.Settings(
             staticdir=self.staticdir
         )
+
+        self.loglock = threading.Lock()
 
     def check_policy(self, req, settings):
         """
@@ -407,28 +400,27 @@ class Pathod(tcp.TCPServer):
             return
 
     def add_log(self, d):
-        if not self.noapi:
-            lock = threading.Lock()
-            with lock:
-                d["id"] = self.logid
-                self.log.insert(0, d)
-                if len(self.log) > self.LOGBUF:
-                    self.log.pop()
-                self.logid += 1
-            return d["id"]
+        with self.loglock:
+            d["id"] = self.logid
+            self.log.insert(0, d)
+            if len(self.log) > self.LOGBUF:
+                self.log.pop()
+            self.logid += 1
+        return d["id"]
 
     def clear_log(self):
-        lock = threading.Lock()
-        with lock:
+        with self.loglock:
             self.log = []
 
     def log_by_id(self, identifier):
-        for i in self.log:
-            if i["id"] == identifier:
-                return i
+        with self.loglock:
+            for i in self.log:
+                if i["id"] == identifier:
+                    return i
 
     def get_log(self):
-        return self.log
+        with self.loglock:
+            return self.log
 
 
 def main(args):  # pragma: no cover
@@ -472,9 +464,7 @@ def main(args):  # pragma: no cover
             staticdir=args.staticdir,
             anchors=args.anchors,
             sizelimit=args.sizelimit,
-            noweb=args.noweb,
             nocraft=args.nocraft,
-            noapi=args.noapi,
             nohang=args.nohang,
             timeout=args.timeout,
             logreq=args.logreq,
@@ -495,7 +485,7 @@ def main(args):  # pragma: no cover
 
     try:
         print("%s listening on %s" % (
-            version.NAMEVERSION,
+            version.PATHOD,
             repr(pd.address)
         ))
         pd.serve_forever()
