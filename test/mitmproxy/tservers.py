@@ -148,7 +148,6 @@ class HTTPProxyTest(ProxyTestBase):
             Constructs a pathod GET request, with the appropriate base and proxy.
         """
         p = self.pathoc(sni=sni)
-        spec = spec.encode("string_escape")
         if self.ssl:
             q = "get:'/p/%s'" % spec
         else:

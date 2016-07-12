@@ -23,8 +23,20 @@ host_header_re = re.compile(r"^(?P<host>[^:]+|\[.+\])(?::(?P<port>\d+))?$")
 class RequestData(message.MessageData):
     def __init__(self, first_line_format, method, scheme, host, port, path, http_version, headers=(), content=None,
                  timestamp_start=None, timestamp_end=None):
+        if isinstance(method, six.text_type):
+            method = method.encode("ascii", "strict")
+        if isinstance(scheme, six.text_type):
+            scheme = scheme.encode("ascii", "strict")
+        if isinstance(host, six.text_type):
+            host = host.encode("idna", "strict")
+        if isinstance(path, six.text_type):
+            path = path.encode("ascii", "strict")
+        if isinstance(http_version, six.text_type):
+            http_version = http_version.encode("ascii", "strict")
         if not isinstance(headers, nheaders.Headers):
             headers = nheaders.Headers(headers)
+        if isinstance(content, six.text_type):
+            raise ValueError("Content must be bytes, not {}".format(type(content).__name__))
 
         self.first_line_format = first_line_format
         self.method = method
@@ -65,10 +77,14 @@ class Request(message.Message):
             Returns:
                 The number of replacements made.
         """
-        # TODO: Proper distinction between text and bytes.
+        if isinstance(pattern, six.text_type):
+            pattern = strutils.escaped_str_to_bytes(pattern)
+        if isinstance(repl, six.text_type):
+            repl = strutils.escaped_str_to_bytes(repl)
+
         c = super(Request, self).replace(pattern, repl, flags)
-        self.path, pc = strutils.safe_subn(
-            pattern, repl, self.path, flags=flags
+        self.path, pc = re.subn(
+            pattern, repl, self.data.path, flags=flags
         )
         c += pc
         return c
@@ -102,6 +118,8 @@ class Request(message.Message):
         """
         HTTP request scheme, which should be "http" or "https".
         """
+        if not self.data.scheme:
+            return self.data.scheme
         return message._native(self.data.scheme)
 
     @scheme.setter
@@ -350,7 +368,7 @@ class Request(message.Message):
         This will overwrite the existing content if there is one.
         """
         self.headers["content-type"] = "application/x-www-form-urlencoded"
-        self.content = netlib.http.url.encode(value)
+        self.content = netlib.http.url.encode(value).encode()
 
     @urlencoded_form.setter
     def urlencoded_form(self, value):

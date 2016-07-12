@@ -16,7 +16,6 @@ from mitmproxy.flow import modules
 from mitmproxy.onboarding import app
 from mitmproxy.protocol import http_replay
 from mitmproxy.proxy.config import HostMatcher
-from netlib import strutils
 
 
 class FlowMaster(controller.Master):
@@ -90,9 +89,10 @@ class FlowMaster(controller.Master):
             Raises:
                 ScriptException
         """
-        s = script.Script(command, script.ScriptContext(self))
+        s = script.Script(command)
         s.load()
         if use_reloader:
+            s.reply = controller.DummyReply()
             script.reloader.watch(s, lambda: self.event_queue.put(("script_change", s)))
         self.scripts.append(s)
 
@@ -235,8 +235,12 @@ class FlowMaster(controller.Master):
         return super(FlowMaster, self).tick(timeout)
 
     def duplicate_flow(self, f):
+        """
+            Duplicate flow, and insert it into state without triggering any of
+            the normal flow events.
+        """
         f2 = f.copy()
-        self.load_flow(f2)
+        self.state.add_flow(f2)
         return f2
 
     def create_request(self, method, scheme, host, port, path):
@@ -482,14 +486,14 @@ class FlowMaster(controller.Master):
             s.unload()
         except script.ScriptException as e:
             ok = False
-            self.add_event('Error reloading "{}":\n{}'.format(s.filename, e), 'error')
+            self.add_event('Error reloading "{}":\n{}'.format(s.path, e), 'error')
         try:
             s.load()
         except script.ScriptException as e:
             ok = False
-            self.add_event('Error reloading "{}":\n{}'.format(s.filename, e), 'error')
+            self.add_event('Error reloading "{}":\n{}'.format(s.path, e), 'error')
         else:
-            self.add_event('"{}" reloaded.'.format(s.filename), 'info')
+            self.add_event('"{}" reloaded.'.format(s.path), 'info')
         return ok
 
     @controller.handler
@@ -501,15 +505,8 @@ class FlowMaster(controller.Master):
 
     @controller.handler
     def tcp_message(self, flow):
+        # type: (TCPFlow) -> None
         self.run_scripts("tcp_message", flow)
-        message = flow.messages[-1]
-        direction = "->" if message.from_client else "<-"
-        self.add_event("{client} {direction} tcp {direction} {server}".format(
-            client=repr(flow.client_conn.address),
-            server=repr(flow.server_conn.address),
-            direction=direction,
-        ), "info")
-        self.add_event(strutils.clean_bin(message.content), "debug")
 
     @controller.handler
     def tcp_error(self, flow):

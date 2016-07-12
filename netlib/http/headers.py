@@ -148,6 +148,15 @@ class Headers(multidict.MultiDict):
         value = _always_bytes(value)
         super(Headers, self).insert(index, key, value)
 
+    def items(self, multi=False):
+        if multi:
+            return (
+                (_native(k), _native(v))
+                for k, v in self.fields
+            )
+        else:
+            return super(Headers, self).items()
+
     def replace(self, pattern, repl, flags=0):
         """
         Replaces a regular expression pattern with repl in each "name: value"
@@ -156,8 +165,10 @@ class Headers(multidict.MultiDict):
         Returns:
             The number of replacements made.
         """
-        pattern = _always_bytes(pattern)
-        repl = _always_bytes(repl)
+        if isinstance(pattern, six.text_type):
+            pattern = strutils.escaped_str_to_bytes(pattern)
+        if isinstance(repl, six.text_type):
+            repl = strutils.escaped_str_to_bytes(repl)
         pattern = re.compile(pattern, flags)
         replacements = 0
 

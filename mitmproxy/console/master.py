@@ -30,7 +30,7 @@ from mitmproxy.console import palettes
 from mitmproxy.console import signals
 from mitmproxy.console import statusbar
 from mitmproxy.console import window
-from netlib import tcp
+from netlib import tcp, strutils
 
 EVENTLOG_SIZE = 500
 
@@ -366,7 +366,7 @@ class ConsoleMaster(flow.FlowMaster):
         signals.add_event("Running script on flow: %s" % command, "debug")
 
         try:
-            s = script.Script(command, script.ScriptContext(self))
+            s = script.Script(command)
             s.load()
         except script.ScriptException as e:
             signals.status_message.send(
@@ -798,8 +798,20 @@ class ConsoleMaster(flow.FlowMaster):
         return f
 
     @controller.handler
+    def tcp_message(self, f):
+        super(ConsoleMaster, self).tcp_message(f)
+        message = f.messages[-1]
+        direction = "->" if message.from_client else "<-"
+        self.add_event("{client} {direction} tcp {direction} {server}".format(
+            client=repr(f.client_conn.address),
+            server=repr(f.server_conn.address),
+            direction=direction,
+        ), "info")
+        self.add_event(strutils.bytes_to_escaped_str(message.content), "debug")
+
+    @controller.handler
     def script_change(self, script):
         if super(ConsoleMaster, self).script_change(script):
-            signals.status_message.send(message='"{}" reloaded.'.format(script.filename))
+            signals.status_message.send(message='"{}" reloaded.'.format(script.path))
         else:
-            signals.status_message.send(message='Error reloading "{}".'.format(script.filename))
+            signals.status_message.send(message='Error reloading "{}".'.format(script.path))

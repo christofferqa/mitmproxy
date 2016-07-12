@@ -205,6 +205,8 @@ class ServerConnection(tcp.TCPClient, stateobject.StateObject):
         self.wfile.flush()
 
     def establish_ssl(self, clientcerts, sni, **kwargs):
+        if sni and not isinstance(sni, six.string_types):
+            raise ValueError("sni must be str, not " + type(sni).__name__)
         clientcert = None
         if clientcerts:
             if os.path.isfile(clientcerts):
@@ -212,7 +214,7 @@ class ServerConnection(tcp.TCPClient, stateobject.StateObject):
             else:
                 path = os.path.join(
                     clientcerts,
-                    self.address.host.encode("idna")) + ".pem"
+                    self.address.host.encode("idna").decode()) + ".pem"
                 if os.path.exists(path):
                     clientcert = path
 

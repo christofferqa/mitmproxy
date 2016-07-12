@@ -11,6 +11,7 @@ from mitmproxy import controller
 from mitmproxy import filt
 from netlib import wsgi
 from netlib import version
+from netlib import strutils
 from netlib.http import cookies
 from netlib.http import http1
 
@@ -216,7 +217,7 @@ class ServerPlaybackState:
         self.nopop = nopop
         self.ignore_params = ignore_params
         self.ignore_content = ignore_content
-        self.ignore_payload_params = ignore_payload_params
+        self.ignore_payload_params = [strutils.always_bytes(x) for x in (ignore_payload_params or ())]
         self.ignore_host = ignore_host
         self.fmap = {}
         for i in flows:
@@ -271,7 +272,7 @@ class ServerPlaybackState:
                 v = r.headers.get(i)
                 headers.append((i, v))
             key.append(headers)
-        return hashlib.sha256(repr(key)).digest()
+        return hashlib.sha256(repr(key).encode("utf8", "surrogateescape")).digest()
 
     def next_flow(self, request):
         """
@@ -319,10 +320,20 @@ class StickyCookieState:
         for name, (value, attrs) in f.response.cookies.items(multi=True):
             # FIXME: We now know that Cookie.py screws up some cookies with
             # valid RFC 822/1123 datetime specifications for expiry. Sigh.
-            a = self.ckey(attrs, f)
-            if self.domain_match(f.request.host, a[0]):
-                b = attrs.with_insert(0, name, value)
-                self.jar[a][name] = b
+            dom_port_path = self.ckey(attrs, f)
+
+            if self.domain_match(f.request.host, dom_port_path[0]):
+                if cookies.is_expired(attrs):
+                    # Remove the cookie from jar
+                    self.jar[dom_port_path].pop(name, None)
+
+                    # If all cookies of a dom_port_path have been removed
+                    # then remove it from the jar itself
+                    if not self.jar[dom_port_path]:
+                        self.jar.pop(dom_port_path, None)
+                else:
+                    b = attrs.with_insert(0, name, value)
+                    self.jar[dom_port_path][name] = b
 
     def handle_request(self, f):
         l = []
